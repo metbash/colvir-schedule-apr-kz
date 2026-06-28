@@ -1,59 +1,79 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0
+ * Version: 4.0-dev1
  *
  * Enums.js
  *
- * Перечисления проекта.
+ * Все перечисления проекта.
  * ==========================================================
  */
 
-import {
-    PAYMENT_METHOD,
-    GRACE_TYPE,
-    DISTRIBUTION_MODE,
-    EVENT_TYPE,
-    HOLIDAY_POLICY
-} from "./Constants.js";
-
 /**
- * Метод погашения
+ * Метод погашения кредита.
  */
 export const PaymentMethod = Object.freeze({
-    ...PAYMENT_METHOD
+
+    ANNUITY: "ANNUITY",
+
+    EQUAL_PRINCIPAL: "EQUAL_PRINCIPAL"
+
 });
 
 /**
- * Тип льготного периода
+ * Тип льготного периода.
  */
 export const GraceType = Object.freeze({
-    ...GRACE_TYPE
+
+    NONE: "NONE",
+
+    PRINCIPAL: "PRINCIPAL",
+
+    INTEREST: "INTEREST",
+
+    FULL: "FULL"
+
 });
 
 /**
- * Способ распределения после льготы
+ * Способ распределения после льготы.
  */
 export const DistributionMode = Object.freeze({
-    ...DISTRIBUTION_MODE
+
+    FIRST_PAYMENT: "FIRST_PAYMENT",
+
+    ALL_NEXT_PAYMENTS: "ALL_NEXT_PAYMENTS"
+
 });
 
 /**
- * Тип события графика
+ * Тип события.
  */
 export const EventType = Object.freeze({
-    ...EVENT_TYPE
+
+    GRACE: "GRACE",
+
+    RATE_CHANGE: "RATE_CHANGE",
+
+    EARLY_REPAYMENT: "EARLY_REPAYMENT",
+
+    MANUAL_ADJUSTMENT: "MANUAL_ADJUSTMENT",
+
+    RESTRUCTURE: "RESTRUCTURE"
+
 });
 
 /**
- * Правило переноса даты платежа
+ * Политика переноса даты.
  */
 export const HolidayPolicy = Object.freeze({
-    ...HOLIDAY_POLICY
+
+    NEXT_WORKING_DAY: "NEXT_WORKING_DAY"
+
 });
 
 /**
- * Статус строки графика
+ * Статус строки графика.
  */
 export const RowStatus = Object.freeze({
 
@@ -70,7 +90,7 @@ export const RowStatus = Object.freeze({
 });
 
 /**
- * Тип изменения ставки
+ * Тип изменения ставки.
  */
 export const RateChangeType = Object.freeze({
 
@@ -81,7 +101,7 @@ export const RateChangeType = Object.freeze({
 });
 
 /**
- * Тип досрочного погашения
+ * Тип досрочного погашения.
  */
 export const EarlyRepaymentType = Object.freeze({
 
@@ -92,7 +112,7 @@ export const EarlyRepaymentType = Object.freeze({
 });
 
 /**
- * Направление перерасчета
+ * Режим перерасчета.
  */
 export const RecalculationMode = Object.freeze({
 
@@ -103,7 +123,7 @@ export const RecalculationMode = Object.freeze({
 });
 
 /**
- * Тип ручной корректировки
+ * Тип ручной корректировки.
  */
 export const ManualAdjustmentType = Object.freeze({
 

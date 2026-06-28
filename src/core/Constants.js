@@ -44,51 +44,6 @@ export const DAY_COUNT = Object.freeze({
 
 });
 
-export const PAYMENT_METHOD = Object.freeze({
-
-    ANNUITY: "ANNUITY",
-
-    EQUAL_PRINCIPAL: "EQUAL_PRINCIPAL"
-
-});
-
-export const GRACE_TYPE = Object.freeze({
-
-    NONE: "NONE",
-
-    PRINCIPAL: "PRINCIPAL",
-
-    INTEREST: "INTEREST",
-
-    FULL: "FULL"
-
-});
-
-export const DISTRIBUTION_MODE = Object.freeze({
-
-    FIRST_PAYMENT: "FIRST_PAYMENT",
-
-    ALL_NEXT_PAYMENTS: "ALL_NEXT_PAYMENTS"
-
-});
-
-export const EVENT_TYPE = Object.freeze({
-
-    GRACE: "GRACE",
-
-    RATE_CHANGE: "RATE_CHANGE",
-
-    EARLY_REPAYMENT: "EARLY_REPAYMENT",
-
-    MANUAL_ADJUSTMENT: "MANUAL_ADJUSTMENT"
-
-});
-
-export const HOLIDAY_POLICY = Object.freeze({
-
-    NEXT_WORKING_DAY: "NEXT_WORKING_DAY"
-
-});
 
 export const APR = Object.freeze({
 
