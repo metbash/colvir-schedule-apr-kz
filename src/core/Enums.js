@@ -73,6 +73,23 @@ export const HolidayPolicy = Object.freeze({
 });
 
 /**
+ * Тип строки графика.
+ */
+export const RowType = Object.freeze({
+
+    NORMAL: "NORMAL",
+
+    GRACE: "GRACE",
+
+    MANUAL: "MANUAL",
+
+    EARLY_REPAYMENT: "EARLY_REPAYMENT",
+
+    RESTRUCTURED: "RESTRUCTURED"
+
+});
+
+/**
  * Статус строки графика.
  */
 export const RowStatus = Object.freeze({

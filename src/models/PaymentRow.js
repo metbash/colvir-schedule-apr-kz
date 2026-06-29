@@ -12,6 +12,7 @@
 
 import Validation from "../core/Validation.js";
 import Money from "../core/Money.js";
+import { RowType } from "../core/Enums.js";
 
 export default class PaymentRow {
 
@@ -31,7 +32,11 @@ export default class PaymentRow {
 
         payment,
 
-        closingBalance
+        closingBalance,
+
+        rowType = RowType.NORMAL,
+
+        metadata = {}
 
     }) {
 
@@ -51,6 +56,12 @@ export default class PaymentRow {
 
         Validation.requirePositiveOrZero("closingBalance", closingBalance);
 
+        if (!Object.values(RowType).includes(rowType)) {
+
+            throw new Error("Unknown row type.");
+
+        }
+
         this.period = period;
 
         this.paymentDate = new Date(paymentDate);
@@ -67,13 +78,18 @@ export default class PaymentRow {
 
         this.closingBalance = Money.round(closingBalance);
 
+        this.rowType = rowType;
+
+        this.metadata = Object.freeze({
+
+            ...metadata
+
+        });
+
         Object.freeze(this);
 
     }
 
-    /**
-     * Представление для JSON.
-     */
     toJSON() {
 
         return {
@@ -92,7 +108,11 @@ export default class PaymentRow {
 
             payment: this.payment,
 
-            closingBalance: this.closingBalance
+            closingBalance: this.closingBalance,
+
+            rowType: this.rowType,
+
+            metadata: this.metadata
 
         };
 
