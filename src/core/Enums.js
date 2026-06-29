@@ -153,3 +153,17 @@ export const ManualAdjustmentType = Object.freeze({
     PAYMENT_DATE: "PAYMENT_DATE"
 
 });
+
+export const BusinessDayConvention = Object.freeze({
+
+    NONE: "NONE",
+
+    FOLLOWING: "FOLLOWING",
+
+    MODIFIED_FOLLOWING: "MODIFIED_FOLLOWING",
+
+    PRECEDING: "PRECEDING",
+
+    MODIFIED_PRECEDING: "MODIFIED_PRECEDING"
+
+});
