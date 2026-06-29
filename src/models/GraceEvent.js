@@ -4,14 +4,12 @@
  * Version: 4.0-dev1
  *
  * GraceEvent.js
- *
- * Событие льготного периода.
  * ==========================================================
  */
 
 import Event from "./Event.js";
 import Validation from "../core/Validation.js";
-import { GraceType } from "../core/Enums.js";
+import { GraceType, EventType } from "../core/Enums.js";
 
 export default class GraceEvent extends Event {
 
@@ -37,7 +35,7 @@ export default class GraceEvent extends Event {
 
             date,
 
-            type: "GRACE",
+            type: EventType.GRACE,
 
             enabled
 
