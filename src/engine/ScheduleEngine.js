@@ -71,6 +71,10 @@ export default class ScheduleEngine {
     /**
      * Добавить техническую строку выдачи кредита.
      *
+     * Первая строка отражает факт выдачи кредита.
+     * Отдельный тип ISSUE пока не вводится,
+     * чтобы не менять существующие модели на Этапе 1.
+     *
      * @param {LoanState} state
      */
     addIssueRow(state) {
@@ -95,7 +99,12 @@ export default class ScheduleEngine {
 
             closingBalance: state.loan.principal,
 
-            rowType: RowType.NORMAL
+            rowType: RowType.NORMAL,
+
+            metadata: {
+                technical: true,
+                kind: "ISSUE"
+            }
 
         });
 
