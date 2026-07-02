@@ -1,9 +1,24 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
+ * Version: 4.0-dev2
  *
  * ScheduleEngine.js
+ *
+ * Этап 1:
+ * Завершение базового движка построения графика.
+ *
+ * Важные ограничения текущего этапа:
+ * - Движок не реализует Grace Period, досрочное погашение,
+ *   изменение ставки и ручные корректировки.
+ * - Архитектура сохраняется без переписывания.
+ * - Используются только существующие классы проекта.
+ * - Перенос рабочих дней выполняется только через Calendar.
+ * - Первый платеж определяется как issueDate -> firstPaymentDate.
+ * - Последний платеж полностью закрывает остаток.
+ *
+ * Поведение Colvir, требующее следующих этапов,
+ * не подменяется предположениями в этом файле.
  * ==========================================================
  */
 
@@ -17,7 +32,11 @@ import PeriodCalculator from "../math/PeriodCalculator.js";
 
 import DateUtils from "../core/DateUtils.js";
 import Money from "../core/Money.js";
-import { RowType } from "../core/Enums.js";
+import {
+    RowType,
+    PaymentMethod,
+    BusinessDayConvention
+} from "../core/Enums.js";
 
 export default class ScheduleEngine {
 
@@ -50,7 +69,9 @@ export default class ScheduleEngine {
     }
 
     /**
-     * Добавить строку выдачи.
+     * Добавить техническую строку выдачи кредита.
+     *
+     * @param {LoanState} state
      */
     addIssueRow(state) {
 
@@ -74,7 +95,7 @@ export default class ScheduleEngine {
 
             closingBalance: state.loan.principal,
 
-            rowType: RowType.ISSUE
+            rowType: RowType.NORMAL
 
         });
 
@@ -84,94 +105,56 @@ export default class ScheduleEngine {
 
     /**
      * Выполнить расчет одного периода.
+     *
+     * @param {LoanState} state
      */
     processNextPeriod(state) {
 
-        const paymentDate =
-            this.calculateNextPaymentDate(state);
+        const paymentDate = this.calculateNextPaymentDate(state);
 
-        const period =
-            PeriodCalculator.calculate(
+        const period = PeriodCalculator.calculate(
+            state.currentDate,
+            paymentDate
+        );
 
-                state.currentDate,
+        const interest = InterestCalculator.calculate(
+            state.balance,
+            state.loan.annualRate,
+            period.days
+        );
 
-                paymentDate
-
-            );
-
-        const interest =
-            InterestCalculator.calculate(
-
-                state.balance,
-
-                state.loan.annualRate,
-
-                period.days
-
-            );
-
-        const payment =
-            this.calculatePayment(
-
-                state,
-
-                interest
-
-            );
-
-        const principal =
-            this.calculatePrincipal(
-
-                state,
-
-                payment,
-
-                interest
-
-            );
-
-        const closingBalance =
-            Money.round(
-
-                state.balance -
-
-                principal
-
-            );
-
-        const row =
-            this.createPaymentRow(
-
-                state,
-
-                paymentDate,
-
-                period,
-
-                payment,
-
-                principal,
-
-                interest,
-
-                closingBalance
-
-            );
-
-        state.addInterest(
-
+        const payment = this.calculatePayment(
+            state,
             interest
-
         );
 
-        state.addRow(
-
-            row
-
+        const principal = this.calculatePrincipal(
+            state,
+            payment,
+            interest
         );
+
+        const closingBalance = this.calculateClosingBalance(
+            state,
+            principal
+        );
+
+        const row = this.createPaymentRow(
+            state,
+            paymentDate,
+            period,
+            payment,
+            principal,
+            interest,
+            closingBalance
+        );
+
+        state.addInterest(interest);
+        state.addRow(row);
 
     }
-        /**
+
+    /**
      * Создать строку графика.
      *
      * @param {LoanState} state
@@ -197,7 +180,7 @@ export default class ScheduleEngine {
 
             period: state.period + 1,
 
-            paymentDate,
+            paymentDate: DateUtils.clone(paymentDate),
 
             days: period.days,
 
@@ -211,7 +194,6 @@ export default class ScheduleEngine {
 
             closingBalance,
 
-            // ISSUE и CLOSING добавим позже
             rowType: RowType.NORMAL
 
         });
@@ -221,68 +203,71 @@ export default class ScheduleEngine {
     /**
      * Рассчитать сумму платежа.
      *
+     * Текущий этап поддерживает только базовые методы:
+     * - аннуитет;
+     * - равные доли основного долга.
+     *
+     * Grace Period и другие специальные сценарии
+     * должны добавляться на следующих этапах через
+     * существующую архитектуру processors/events.
+     *
      * @param {LoanState} state
      * @param {number} interest
      * @returns {number}
      */
-    calculatePayment(
-        state,
-        interest
-    ) {
+    calculatePayment(state, interest) {
 
         const loan = state.loan;
 
-        let payment;
+        if (this.isLastPayment(state)) {
+
+            return Money.add(
+                state.balance,
+                interest
+            );
+
+        }
 
         switch (loan.paymentMethod) {
 
-            case "ANNUITY":
+            case PaymentMethod.ANNUITY:
 
-                payment =
-                    PaymentCalculator.calculateAnnuity(
+                return PaymentCalculator.calculateAnnuity(
+                    loan.principal,
+                    loan.annualRate,
+                    loan.term
+                );
 
-                        loan.principal,
+            case PaymentMethod.EQUAL_PRINCIPAL: {
 
-                        loan.annualRate,
+                const remainingPeriods =
+                    loan.term - state.period;
 
-                        loan.term
-
+                const principalPart =
+                    PaymentCalculator.calculateEqualPrincipal(
+                        state.balance,
+                        remainingPeriods
                     );
 
-                break;
+                return Money.add(
+                    principalPart,
+                    interest
+                );
 
-            case "EQUAL_PRINCIPAL":
-
-                payment =
-
-                    PaymentCalculator.calculateEqualPrincipal(
-
-                        loan.principal,
-
-                        loan.term
-
-                    ) +
-
-                    interest;
-
-                break;
+            }
 
             default:
 
                 throw new Error(
-
                     "Unknown payment method."
-
                 );
 
         }
 
-        return Money.round(payment);
-
     }
 
     /**
-     * Рассчитать погашение тела.
+     * Рассчитать погашение основного долга.
      *
      * @param {LoanState} state
      * @param {number} payment
@@ -295,10 +280,17 @@ export default class ScheduleEngine {
         interest
     ) {
 
-        let principal = Money.round(
+        if (this.isLastPayment(state)) {
 
-            payment - interest
+            return Money.round(
+                state.balance
+            );
 
+        }
+
+        let principal = Money.subtract(
+            payment,
+            interest
         );
 
         if (principal < 0) {
@@ -318,44 +310,86 @@ export default class ScheduleEngine {
     }
 
     /**
+     * Рассчитать остаток после платежа.
+     *
+     * @param {LoanState} state
+     * @param {number} principal
+     * @returns {number}
+     */
+    calculateClosingBalance(state, principal) {
+
+        if (this.isLastPayment(state)) {
+
+            return 0;
+
+        }
+
+        return Money.subtract(
+            state.balance,
+            principal
+        );
+
+    }
+
+    /**
      * Следующая дата платежа.
      *
-     * Пока используется простой
-     * переход на месяц вперед.
-     * Позже здесь будет Calendar.
+     * Правило проекта:
+     * issueDate -> firstPaymentDate -> далее от firstPaymentDate.
+     *
+     * Нельзя считать первый платеж как issueDate + 1 месяц.
+     *
+     * Для предотвращения накопления ошибок переносов
+     * каждая следующая дата рассчитывается относительно
+     * firstPaymentDate, а не относительно предыдущей даты платежа.
      *
      * @param {LoanState} state
      * @returns {Date}
      */
     calculateNextPaymentDate(state) {
 
-        let paymentDate =
+        let paymentDate;
 
-            DateUtils.addMonths(
+        if (state.period === 0) {
 
-                state.currentDate,
-
-                1
-
+            paymentDate = DateUtils.clone(
+                state.loan.firstPaymentDate
             );
 
+        } else {
+
+            paymentDate = DateUtils.addMonths(
+                state.loan.firstPaymentDate,
+                state.period
+            );
+
+        }
+
+        return this.adjustPaymentDate(
+            paymentDate
+        );
+
+    }
+
+    /**
+     * Перенести дату через существующий Calendar.
+     *
+     * Внутри ScheduleEngine переносы не реализуются.
+     *
+     * @param {Date} paymentDate
+     * @returns {Date}
+     */
+    adjustPaymentDate(paymentDate) {
+
         if (
-
             this.calendar &&
-
-            typeof this.calendar.adjust === "function"
-
+            typeof this.calendar.adjustDate === "function"
         ) {
 
-            paymentDate =
-
-                this.calendar.adjust(
-
-                    paymentDate,
-
-                    state.loan.businessDayConvention
-
-                );
+            return this.calendar.adjustDate(
+                paymentDate,
+                BusinessDayConvention.FOLLOWING
+            );
 
         }
 
@@ -372,9 +406,7 @@ export default class ScheduleEngine {
     isFinished(state) {
 
         if (
-
-            Money.round(state.balance) <= 0
-
+            state.period >= state.loan.term
         ) {
 
             return true;
@@ -382,9 +414,8 @@ export default class ScheduleEngine {
         }
 
         if (
-
-            state.period >= state.loan.term
-
+            state.period > 0 &&
+            Money.isZero(state.balance)
         ) {
 
             return true;
@@ -394,94 +425,20 @@ export default class ScheduleEngine {
         return false;
 
     }
-        
-    /**
-     * Выполнить весь расчет.
-     *
-     * Используется generate().
-     *
-     * @param {LoanState} state
-     */
-    calculate(state) {
-
-        while (!this.isFinished(state)) {
-
-            this.calculateRow(state);
-
-        }
-
-    }
-
-    /**
-     * Получить последнюю строку.
-     *
-     * @param {LoanState} state
-     * @returns {PaymentRow|null}
-     */
-    getLastRow(state) {
-
-        if (state.rows.length === 0) {
-            return null;
-        }
-
-        return state.rows[state.rows.length - 1];
-
-    }
 
     /**
      * Проверка последнего платежа.
+     *
+     * Последний период должен полностью закрыть остаток,
+     * чтобы устранить накопленные ошибки округления.
      *
      * @param {LoanState} state
      * @returns {boolean}
      */
     isLastPayment(state) {
 
-        return Money.round(state.balance) <= 0;
+        return state.period + 1 >= state.loan.term;
 
     }
-
-    /**
-     * Исправить ошибки округления.
-     *
-     * @param {LoanState} state
-     */
-    normalizeSchedule(state) {
-
-        const lastRow = this.getLastRow(state);
-
-        if (!lastRow) {
-            return;
-        }
-
-        if (Money.round(lastRow.closingBalance) !== 0) {
-            return;
-        }
-
-        lastRow.closingBalance = 0;
-
-    }
-
-    /**
-     * Проверка результата.
-     *
-     * @param {Schedule} schedule
-     */
-    validate(schedule) {
-
-        if (!schedule) {
-            throw new Error("Schedule is null.");
-        }
-
-        if (!schedule.rows) {
-            throw new Error("Schedule rows are missing.");
-        }
-
-        if (schedule.rows.length === 0) {
-            throw new Error("Schedule is empty.");
-        }
-
-    }
-
-  
 
 }
