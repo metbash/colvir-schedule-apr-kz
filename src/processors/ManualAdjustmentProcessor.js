@@ -1,7 +1,7 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
+ * Version: 4.0-dev2
  *
  * ManualAdjustmentProcessor.js
  *
@@ -12,6 +12,11 @@
  * - PRINCIPAL
  * - INTEREST
  * - PAYMENT_DATE
+ *
+ * Важно:
+ * PAYMENT_DATE теперь требует полного пересчета строки,
+ * поэтому применяется через ScheduleEngine с передачей
+ * расчетного контекста.
  * ==========================================================
  */
 
@@ -26,29 +31,46 @@ import {
 export default class ManualAdjustmentProcessor extends BaseProcessor {
 
     /**
-     * Применить все ручные корректировки
-     * к уже рассчитанной строке.
+     * Получить список событий ручной корректировки
+     * для конкретной строки.
      *
      * @param {LoanState} state
      * @param {PaymentRow} row
+     * @returns {Array}
+     */
+    getEvents(state, row) {
+
+        return state.getManualAdjustmentEventsForDate(
+            row.paymentDate
+        );
+
+    }
+
+    /**
+     * Применить корректировки, не требующие
+     * полного пересчета строки.
+     *
+     * PAYMENT_DATE здесь не применяется,
+     * так как требует пересчета периода и процентов.
+     *
+     * @param {PaymentRow} row
+     * @param {Array} events
      * @returns {PaymentRow}
      */
-    process(state, row) {
-
-        const events =
-            state.getManualAdjustmentEventsForDate(
-                row.paymentDate
-            );
-
-        if (events.length === 0) {
-
-            return row;
-
-        }
+    applySimpleAdjustments(row, events) {
 
         let adjustedRow = row;
 
         for (const event of events) {
+
+            if (
+                event.adjustmentType ===
+                ManualAdjustmentType.PAYMENT_DATE
+            ) {
+
+                continue;
+
+            }
 
             adjustedRow = this.applyEvent(
                 adjustedRow,
@@ -58,6 +80,27 @@ export default class ManualAdjustmentProcessor extends BaseProcessor {
         }
 
         return adjustedRow;
+
+    }
+
+    /**
+     * Найти событие изменения даты платежа.
+     *
+     * @param {Array} events
+     * @returns {Object|null}
+     */
+    getPaymentDateAdjustment(events) {
+
+        const event = events.find((item) => {
+
+            return (
+                item.adjustmentType ===
+                ManualAdjustmentType.PAYMENT_DATE
+            );
+
+        });
+
+        return event || null;
 
     }
 
@@ -83,12 +126,6 @@ export default class ManualAdjustmentProcessor extends BaseProcessor {
                     event.value
                 );
 
-            case ManualAdjustmentType.PAYMENT_DATE:
-                return this.applyPaymentDateAdjustment(
-                    row,
-                    event.value
-                );
-
             default:
                 throw new Error(
                     "Unknown manual adjustment type."
@@ -100,10 +137,18 @@ export default class ManualAdjustmentProcessor extends BaseProcessor {
 
     applyPaymentAdjustment(row, payment) {
 
-        const principal = Money.max(
-            0,
-            Money.subtract(payment, row.interest)
+        let principal = Money.subtract(
+            payment,
+            row.interest
         );
+
+        if (principal < 0) {
+            principal = 0;
+        }
+
+        if (principal > row.openingBalance) {
+            principal = row.openingBalance;
+        }
 
         const closingBalance = Money.max(
             0,
@@ -122,6 +167,14 @@ export default class ManualAdjustmentProcessor extends BaseProcessor {
     }
 
     applyPrincipalAdjustment(row, principal) {
+
+        if (principal < 0) {
+            principal = 0;
+        }
+
+        if (principal > row.openingBalance) {
+            principal = row.openingBalance;
+        }
 
         const payment = Money.add(
             principal,
@@ -146,6 +199,10 @@ export default class ManualAdjustmentProcessor extends BaseProcessor {
 
     applyInterestAdjustment(row, interest) {
 
+        if (interest < 0) {
+            interest = 0;
+        }
+
         const payment = Money.add(
             row.principal,
             interest
@@ -158,15 +215,9 @@ export default class ManualAdjustmentProcessor extends BaseProcessor {
 
     }
 
-    applyPaymentDateAdjustment(row, value) {
+    markAsManual(row) {
 
-        const paymentDate = value instanceof Date
-            ? value
-            : new Date(value);
-
-        return this.cloneRow(row, {
-            paymentDate
-        });
+        return this.cloneRow(row, {});
 
     }
 
@@ -178,7 +229,7 @@ export default class ManualAdjustmentProcessor extends BaseProcessor {
 
             paymentDate: patch.paymentDate || row.paymentDate,
 
-            days: row.days,
+            days: patch.days ?? row.days,
 
             openingBalance: row.openingBalance,
 

@@ -1,14 +1,17 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev6
+ * Version: 4.0-dev9
  *
  * ScheduleEngine.js
  *
- * Этап 4:
+ * Этап 5:
  * - grace periods;
  * - RATE_CHANGE;
- * - MANUAL_ADJUSTMENT.
+ * - MANUAL_ADJUSTMENT;
+ * - PAYMENT_DATE full recalculation;
+ * - planned payment change;
+ * - RESTRUCTURE.
  * ==========================================================
  */
 
@@ -102,15 +105,67 @@ export default class ScheduleEngine {
 
     processNextPeriod(state) {
 
-        const paymentDate = this.calculateNextPaymentDate(state);
+        const scheduledPaymentDate =
+            this.calculateNextPaymentDate(state);
+
+        const pipeline =
+            this.eventPipelineProcessor.process(state);
+
+        let row = this.buildBaseRow(
+            state,
+            scheduledPaymentDate,
+            pipeline
+        );
+
+        const manualEvents =
+            this.manualAdjustmentProcessor.getEvents(
+                state,
+                row
+            );
+
+        const paymentDateAdjustment =
+            this.manualAdjustmentProcessor.getPaymentDateAdjustment(
+                manualEvents
+            );
+
+        if (paymentDateAdjustment) {
+
+            row = this.rebuildRowWithManualDate(
+                state,
+                pipeline,
+                paymentDateAdjustment.value
+            );
+
+        }
+
+        row = this.manualAdjustmentProcessor.applySimpleAdjustments(
+            row,
+            manualEvents
+        );
+
+        if (manualEvents.length > 0) {
+
+            row = this.manualAdjustmentProcessor.markAsManual(
+                row
+            );
+
+        }
+
+        state.addInterest(row.interest);
+        state.addRow(row);
+
+    }
+
+    buildBaseRow(
+        state,
+        paymentDate,
+        pipeline
+    ) {
 
         const period = PeriodCalculator.calculate(
             state.currentDate,
             paymentDate
         );
-
-        const pipeline =
-            this.eventPipelineProcessor.process(state);
 
         const interest = InterestCalculator.calculate(
             state.balance,
@@ -118,11 +173,9 @@ export default class ScheduleEngine {
             period.days
         );
 
-        let row;
-
         if (pipeline.graceType === GraceType.PRINCIPAL) {
 
-            row = this.createPaymentRow(
+            return this.createPaymentRow(
                 state,
                 paymentDate,
                 period,
@@ -130,20 +183,24 @@ export default class ScheduleEngine {
                 0,
                 interest,
                 state.balance,
-                RowType.GRACE
+                RowType.GRACE,
+                pipeline
             );
 
-        } else if (
-            pipeline.graceType === GraceType.INTEREST
-        ) {
+        }
+
+        if (pipeline.graceType === GraceType.INTEREST) {
 
             const principal =
                 this.calculateStandardPrincipal(
                     state,
-                    interest
+                    interest,
+                    pipeline.effectiveRate,
+                    pipeline.plannedPayment,
+                    pipeline.effectiveTerm
                 );
 
-            row = this.createPaymentRow(
+            return this.createPaymentRow(
                 state,
                 paymentDate,
                 period,
@@ -154,14 +211,15 @@ export default class ScheduleEngine {
                     state.balance,
                     principal
                 ),
-                RowType.GRACE
+                RowType.GRACE,
+                pipeline
             );
 
-        } else if (
-            pipeline.graceType === GraceType.FULL
-        ) {
+        }
 
-            row = this.createPaymentRow(
+        if (pipeline.graceType === GraceType.FULL) {
+
+            return this.createPaymentRow(
                 state,
                 paymentDate,
                 period,
@@ -169,49 +227,69 @@ export default class ScheduleEngine {
                 0,
                 0,
                 state.balance,
-                RowType.GRACE
-            );
-
-        } else {
-
-            const payment = this.calculatePayment(
-                state,
-                interest,
-                pipeline.effectiveRate
-            );
-
-            const principal = this.calculatePrincipal(
-                state,
-                payment,
-                interest
-            );
-
-            const closingBalance =
-                this.calculateClosingBalance(
-                    state,
-                    principal
-                );
-
-            row = this.createPaymentRow(
-                state,
-                paymentDate,
-                period,
-                payment,
-                principal,
-                interest,
-                closingBalance,
-                RowType.NORMAL
+                RowType.GRACE,
+                pipeline
             );
 
         }
 
-        row = this.manualAdjustmentProcessor.process(
+        const payment = this.calculatePayment(
             state,
-            row
+            interest,
+            pipeline.effectiveRate,
+            pipeline.plannedPayment,
+            pipeline.effectiveTerm
         );
 
-        state.addInterest(row.interest);
-        state.addRow(row);
+        const principal = this.calculatePrincipal(
+            state,
+            payment,
+            interest
+        );
+
+        const closingBalance =
+            this.calculateClosingBalance(
+                state,
+                principal
+            );
+
+        const rowType =
+            pipeline.restructureEvent
+                ? RowType.RESTRUCTURED
+                : RowType.NORMAL;
+
+        return this.createPaymentRow(
+            state,
+            paymentDate,
+            period,
+            payment,
+            principal,
+            interest,
+            closingBalance,
+            rowType,
+            pipeline
+        );
+
+    }
+
+    rebuildRowWithManualDate(
+        state,
+        pipeline,
+        manualDateValue
+    ) {
+
+        const manualDate = manualDateValue instanceof Date
+            ? manualDateValue
+            : new Date(manualDateValue);
+
+        const adjustedPaymentDate =
+            this.adjustPaymentDate(manualDate);
+
+        return this.buildBaseRow(
+            state,
+            adjustedPaymentDate,
+            pipeline
+        );
 
     }
 
@@ -223,7 +301,8 @@ export default class ScheduleEngine {
         principal,
         interest,
         closingBalance,
-        rowType = RowType.NORMAL
+        rowType = RowType.NORMAL,
+        pipeline = null
     ) {
 
         return new PaymentRow({
@@ -247,7 +326,13 @@ export default class ScheduleEngine {
             rowType,
 
             metadata: {
-                effectiveRate: state.effectiveRate
+                effectiveRate: state.effectiveRate,
+                effectiveTerm: state.effectiveTerm,
+                plannedPayment: state.plannedPayment,
+                restructureApplied: Boolean(
+                    pipeline &&
+                    pipeline.restructureEvent
+                )
             }
 
         });
@@ -257,12 +342,12 @@ export default class ScheduleEngine {
     calculatePayment(
         state,
         interest,
-        effectiveRate
+        effectiveRate,
+        plannedPayment = null,
+        effectiveTerm = null
     ) {
 
-        const loan = state.loan;
-
-        if (this.isLastPayment(state)) {
+        if (this.isLastPayment(state, effectiveTerm)) {
 
             return Money.add(
                 state.balance,
@@ -271,20 +356,38 @@ export default class ScheduleEngine {
 
         }
 
-        switch (loan.paymentMethod) {
+        if (
+            plannedPayment !== null &&
+            state.loan.paymentMethod ===
+                PaymentMethod.ANNUITY
+        ) {
+
+            return Money.round(
+                plannedPayment
+            );
+
+        }
+
+        switch (state.loan.paymentMethod) {
 
             case PaymentMethod.ANNUITY:
 
                 return PaymentCalculator.calculateAnnuity(
-                    loan.principal,
+                    state.balance,
                     effectiveRate,
-                    loan.term
+                    this.getRemainingPeriods(
+                        state,
+                        effectiveTerm
+                    )
                 );
 
             case PaymentMethod.EQUAL_PRINCIPAL: {
 
                 const remainingPeriods =
-                    loan.term - state.period;
+                    this.getRemainingPeriods(
+                        state,
+                        effectiveTerm
+                    );
 
                 const principalPart =
                     PaymentCalculator.calculateEqualPrincipal(
@@ -310,19 +413,22 @@ export default class ScheduleEngine {
 
     calculateStandardPrincipal(
         state,
-        interest
+        interest,
+        effectiveRate = null,
+        plannedPayment = null,
+        effectiveTerm = null
     ) {
 
-        if (this.isLastPayment(state)) {
-
+        if (this.isLastPayment(state, effectiveTerm)) {
             return Money.round(state.balance);
-
         }
 
         const payment = this.calculatePayment(
             state,
             interest,
-            state.effectiveRate
+            effectiveRate ?? state.effectiveRate,
+            plannedPayment ?? state.plannedPayment,
+            effectiveTerm ?? state.effectiveTerm
         );
 
         let principal = Money.subtract(
@@ -348,10 +454,8 @@ export default class ScheduleEngine {
         interest
     ) {
 
-        if (this.isLastPayment(state)) {
-
+        if (this.isLastPayment(state, state.effectiveTerm)) {
             return Money.round(state.balance);
-
         }
 
         let principal = Money.subtract(
@@ -373,7 +477,7 @@ export default class ScheduleEngine {
 
     calculateClosingBalance(state, principal) {
 
-        if (this.isLastPayment(state)) {
+        if (this.isLastPayment(state, state.effectiveTerm)) {
             return 0;
         }
 
@@ -381,6 +485,18 @@ export default class ScheduleEngine {
             state.balance,
             principal
         );
+
+    }
+
+    getRemainingPeriods(
+        state,
+        effectiveTerm = null
+    ) {
+
+        const term =
+            effectiveTerm ?? state.effectiveTerm;
+
+        return term - state.period;
 
     }
 
@@ -427,9 +543,15 @@ export default class ScheduleEngine {
 
     }
 
-    isFinished(state) {
+    isFinished(
+        state,
+        effectiveTerm = null
+    ) {
 
-        if (state.period >= state.loan.term) {
+        const term =
+            effectiveTerm ?? state.effectiveTerm;
+
+        if (state.period >= term) {
             return true;
         }
 
@@ -444,9 +566,15 @@ export default class ScheduleEngine {
 
     }
 
-    isLastPayment(state) {
+    isLastPayment(
+        state,
+        effectiveTerm = null
+    ) {
 
-        return state.period + 1 >= state.loan.term;
+        const term =
+            effectiveTerm ?? state.effectiveTerm;
+
+        return state.period + 1 >= term;
 
     }
 

@@ -1,11 +1,9 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev6
+ * Version: 4.0-dev8
  *
  * LoanState.js
- *
- * Рабочее состояние кредита во время расчета.
  * ==========================================================
  */
 
@@ -42,6 +40,10 @@ export default class LoanState {
         this.rows = [];
 
         this.effectiveRate = loan.annualRate;
+
+        this.effectiveTerm = loan.term;
+
+        this.plannedPayment = null;
 
     }
 
@@ -90,15 +92,11 @@ export default class LoanState {
     }
 
     nextPeriod() {
-
         this.period++;
-
     }
 
     getNextPeriodNumber() {
-
         return this.period + 1;
-
     }
 
     getEnabledEvents() {
@@ -107,9 +105,7 @@ export default class LoanState {
             !this.loan.events ||
             !Array.isArray(this.loan.events)
         ) {
-
             return [];
-
         }
 
         return this.loan.events.filter(
@@ -158,13 +154,6 @@ export default class LoanState {
 
     }
 
-    /**
-     * Получить manual adjustment events,
-     * относящиеся к расчетной дате строки.
-     *
-     * @param {Date} paymentDate
-     * @returns {Array}
-     */
     getManualAdjustmentEventsForDate(paymentDate) {
 
         return this.getEventsByType(
@@ -190,27 +179,21 @@ export default class LoanState {
     }
 
     hasPrincipalGrace() {
-
         return this.hasActiveGrace(
             GraceType.PRINCIPAL
         );
-
     }
 
     hasInterestGrace() {
-
         return this.hasActiveGrace(
             GraceType.INTEREST
         );
-
     }
 
     hasFullGrace() {
-
         return this.hasActiveGrace(
             GraceType.FULL
         );
-
     }
 
     getActiveRateChangeEvent() {
@@ -220,9 +203,7 @@ export default class LoanState {
         );
 
         if (events.length === 0) {
-
             return null;
-
         }
 
         return events[events.length - 1];
@@ -236,6 +217,69 @@ export default class LoanState {
         }
 
         this.effectiveRate = event.annualRate;
+
+    }
+
+    getActivePlannedPaymentChangeEvent() {
+
+        const events = this.getDateReachedEvents(
+            EventType.PLANNED_PAYMENT_CHANGE
+        );
+
+        if (events.length === 0) {
+            return null;
+        }
+
+        return events[events.length - 1];
+
+    }
+
+    applyPlannedPaymentChange(event) {
+
+        if (!event) {
+            return;
+        }
+
+        this.plannedPayment = event.payment;
+
+    }
+
+    getActiveRestructureEvent() {
+
+        const events = this.getDateReachedEvents(
+            EventType.RESTRUCTURE
+        );
+
+        if (events.length === 0) {
+            return null;
+        }
+
+        return events[events.length - 1];
+
+    }
+
+    applyRestructure(event) {
+
+        if (!event) {
+            return;
+        }
+
+        if (event.annualRate !== null) {
+            this.effectiveRate = event.annualRate;
+        }
+
+        if (event.term !== null) {
+            this.effectiveTerm = event.term;
+        }
+
+        /**
+         * После реструктуризации хвост графика
+         * должен жить по новым условиям.
+         * Чтобы не тащить старый planned payment,
+         * сбрасываем его и позволяем задать заново
+         * отдельным событием, если это нужно.
+         */
+        this.plannedPayment = null;
 
     }
 
