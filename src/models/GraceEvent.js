@@ -1,101 +1,131 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
+ * Version: 4.0-dev10
  *
  * GraceEvent.js
+ *
+ * Событие льготного периода.
+ * Поддерживает типы: PRINCIPAL, INTEREST, FULL.
  * ==========================================================
  */
 
-import EventType from "../core/Enums.js";
+import Event from "./Event.js";
 import Validation from "../core/Validation.js";
-import DateUtils from "../core/DateUtils.js";
+import { GraceType, EventType } from "../core/Enums.js";
 
-export default class GraceEvent {
+export default class GraceEvent extends Event {
 
     constructor({
 
-        type = EventType.GRACE,
+        id,
 
-        startDate,
+        date,
 
-        gracePrincipalMonths = 0,
+        graceType,
 
-        graceInterestMonths = 0,
+        startPeriod,
 
-        metadata = {}
+        endPeriod,
+
+        enabled = true
 
     }) {
 
-        if (type !== EventType.GRACE) {
-            throw new Error(
-                "GraceEvent must have type EventType.GRACE."
-            );
-        }
+        super({
 
-        Validation.requireDate(
-            "startDate",
-            startDate
-        );
+            id,
 
-        Validation.requirePositiveOrZero(
-            "gracePrincipalMonths",
-            gracePrincipalMonths
-        );
+            date,
 
-        Validation.requirePositiveOrZero(
-            "graceInterestMonths",
-            graceInterestMonths
-        );
+            type: EventType.GRACE,
 
-        if (
-            metadata === null ||
-            typeof metadata !== "object" ||
-            Array.isArray(metadata)
-        ) {
-            throw new TypeError(
-                "metadata must be an object."
-            );
-        }
+            enabled
 
-        this.type = EventType.GRACE;
-
-        this.startDate = new Date(startDate);
-
-        this.gracePrincipalMonths = gracePrincipalMonths;
-
-        this.graceInterestMonths = graceInterestMonths;
-
-        this.metadata = Object.freeze({
-            ...metadata
         });
+
+        if (!Object.values(GraceType).includes(graceType)) {
+
+            throw new Error(
+                "Unknown grace type. " +
+                "Allowed values: NONE, PRINCIPAL, INTEREST, FULL."
+            );
+
+        }
+
+        Validation.requireInteger(
+            "startPeriod",
+            startPeriod
+        );
+
+        Validation.requireInteger(
+            "endPeriod",
+            endPeriod
+        );
+
+        if (startPeriod < 1) {
+
+            throw new RangeError(
+                "startPeriod must be >= 1."
+            );
+
+        }
+
+        if (endPeriod < startPeriod) {
+
+            throw new RangeError(
+                "endPeriod must be greater than or equal to startPeriod."
+            );
+
+        }
+
+        this.graceType = graceType;
+
+        this.startPeriod = startPeriod;
+
+        this.endPeriod = endPeriod;
 
         Object.freeze(this);
 
     }
 
-    getEffectiveStartDate() {
-        return this.startDate;
+    getGraceType() {
+
+        return this.graceType;
+
     }
 
-    getGracePrincipalMonths() {
-        return this.gracePrincipalMonths;
+    getStartPeriod() {
+
+        return this.startPeriod;
+
     }
 
-    getGraceInterestMonths() {
-        return this.graceInterestMonths;
+    getEndPeriod() {
+
+        return this.endPeriod;
+
+    }
+
+    isApplicableToPeriod(periodNumber) {
+
+        return (
+            periodNumber >= this.startPeriod &&
+            periodNumber <= this.endPeriod
+        );
+
     }
 
     toJSON() {
 
         return {
+            id: this.id,
+            date: this.date,
             type: this.type,
-            startDate: this.startDate,
-            gracePrincipalMonths:
-                this.gracePrincipalMonths,
-            graceInterestMonths:
-                this.graceInterestMonths,
-            metadata: this.metadata
+            graceType: this.graceType,
+            startPeriod: this.startPeriod,
+            endPeriod: this.endPeriod,
+            enabled: this.enabled
         };
 
     }

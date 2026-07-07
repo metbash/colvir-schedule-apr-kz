@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Colvir Schedule & APR Calculator (KZ)</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            margin-top: 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+        }
+        .row {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .panel {
+            flex: 1 1 300px;
+            min-width: 300px;
+        }
+        .section {
+            margin-bottom: 20px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 12px;
+        }
+        .section-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        label {
+            display: block;
+            margin: 8px 0 4px;
+            font-size: 14px;
+        }
+        input, select, button {
+            width: 100%;
+            padding: 6px 8px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            background: #1976d2;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+        button:hover {
+            background: #1565c0;
+        }
+        .event-list {
+            margin-top: 8px;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+        .event-item {
+            padding: 6px 8px;
+            border-bottom: 1px solid #eee;
+            font-size: 13px;
+        }
+        .event-item:last-child {
+            border-bottom: none;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 4px 6px;
+            text-align: right;
+        }
+        th {
+            background: #f5f5f5;
+            text-align: center;
+        }
+        .summary {
+            margin-top: 12px;
+            font-size: 14px;
+        }
+        .error {
+            color: #b00020;
+            margin-top: 10px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Colvir Schedule & APR Calculator (KZ)</h1>
+
+    <div class="row">
+        <div class="panel">
+            <div class="section">
+                <div class="section-title">Параметры займа</div>
+
+                <label>Сумма (principal)</label>
+                <input type="number" id="principal" value="1000000">
+
+                <label>Ставка % годовых</label>
+                <input type="number" id="annualRate" value="25" step="0.01">
+
+                <label>Срок (месяцев)</label>
+                <input type="number" id="term" value="12">
+
+                <label>Метод погашения</label>
+                <select id="paymentMethod">
+                    <option value="EQUAL_PRINCIPAL">Равные части основного долга</option>
+                    <option value="ANNUITY">Аннуитет</option>
+                </select>
+
+                <label>Дата выдачи (issueDate)</label>
+                <input type="date" id="issueDate" value="2026-01-15">
+
+                <label>Дата первого платежа (firstPaymentDate)</label>
+                <input type="date" id="firstPaymentDate" value="2026-02-15">
+            </div>
+
+            <div class="section">
+                <div class="section-title">Добавить событие</div>
+
+                <label>Тип события</label>
+                <select id="eventType">
+                    <option value="GRACE">GRACE (льгота)</option>
+                    <option value="RATE_CHANGE">RATE_CHANGE (смена ставки)</option>
+                    <option value="EARLY_REPAYMENT">EARLY_REPAYMENT (досрочное)</option>
+                    <option value="PLANNED_PAYMENT_CHANGE">PLANNED_PAYMENT_CHANGE</option>
+                    <option value="RESTRUCTURE">RESTRUCTURE</option>
+                </select>
+
+                <div id="graceFields">
+                    <label>Grace type</label>
+                    <select id="graceType">
+                        <option value="PRINCIPAL">PRINCIPAL (льгота по ОД)</option>
+                        <option value="INTEREST">INTEREST (льгота по %)</option>
+                        <option value="FULL">FULL (полная льгота)</option>
+                    </select>
+
+                    <label>Начальный период</label>
+                    <input type="number" id="graceStartPeriod" value="1">
+
+                    <label>Конечный период</label>
+                    <input type="number" id="graceEndPeriod" value="2">
+                </div>
+
+                <div id="rateChangeFields" style="display:none;">
+                    <label>Новая ставка %</label>
+                    <input type="number" id="newRate" value="20" step="0.01">
+                </div>
+
+                <div id="earlyRepaymentFields" style="display:none;">
+                    <label>Сумма досрочного погашения</label>
+                    <input type="number" id="earlyAmount" value="100000">
+                    <label>Тип</label>
+                    <select id="earlyType">
+                        <option value="PARTIAL">PARTIAL</option>
+                        <option value="FULL">FULL</option>
+                    </select>
+                </div>
+
+                <button id="addEventBtn">Добавить событие</button>
+
+                <div class="event-list" id="eventList">
+                    <!-- События -->
+                </div>
+            </div>
+
+            <button id="calculateBtn">Рассчитать график</button>
+            <div class="error" id="errorBox"></div>
+        </div>
+
+        <div class="panel">
+            <div class="section">
+                <div class="section-title">График платежей</div>
+                <div style="overflow-x:auto;">
+                    <table id="scheduleTable">
+                        <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Дата</th>
+                            <th>Дней</th>
+                            <th>ОД (начало)</th>
+                            <th>Principal</th>
+                            <th>Interest</th>
+                            <th>Payment</th>
+                            <th>ОД (конец)</th>
+                            <th>Тип</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <!-- Строки графика -->
+                        </tbody>
+                    </table>
+                </div>
+                <div class="summary" id="summaryBox"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+    import Loan from "./src/models/Loan.js";
+    import ScheduleEngine from "./src/engine/ScheduleEngine.js";
+    import { PaymentMethod, GraceType, EventType, EarlyRepaymentType, RateChangeType } from "./src/core/Enums.js";
+    import GraceEvent from "./src/models/GraceEvent.js";
+    import RateChangeEvent from "./src/models/RateChangeEvent.js";
+    import EarlyRepaymentEvent from "./src/models/EarlyRepaymentEvent.js";
+    import CalendarKZ from "./src/calendar/CalendarKZ.js";
+    import { formatKZ } from "./src/core/DateUtils.js";
+    import Money from "./src/core/Money.js";
+
+    // --------------------------------------------------------------
+    // Состояние UI
+    // --------------------------------------------------------------
+
+    const events = [];
+
+    const principalInput = document.getElementById("principal");
+    const annualRateInput = document.getElementById("annualRate");
+    const termInput = document.getElementById("term");
+    const paymentMethodSelect = document.getElementById("paymentMethod");
+    const issueDateInput = document.getElementById("issueDate");
+    const firstPaymentDateInput = document.getElementById("firstPaymentDate");
+
+    const eventTypeSelect = document.getElementById("eventType");
+    const graceFields = document.getElementById("graceFields");
+    const rateChangeFields = document.getElementById("rateChangeFields");
+    const earlyRepaymentFields = document.getElementById("earlyRepaymentFields");
+
+    const graceTypeSelect = document.getElementById("graceType");
+    const graceStartPeriodInput = document.getElementById("graceStartPeriod");
+    const graceEndPeriodInput = document.getElementById("graceEndPeriod");
+
+    const newRateInput = document.getElementById("newRate");
+
+    const earlyAmountInput = document.getElementById("earlyAmount");
+    const earlyTypeSelect = document.getElementById("earlyType");
+
+    const addEventBtn = document.getElementById("addEventBtn");
+    const eventListDiv = document.getElementById("eventList");
+
+    const calculateBtn = document.getElementById("calculateBtn");
+    const errorBox = document.getElementById("errorBox");
+    const scheduleTableBody = document.querySelector("#scheduleTable tbody");
+    const summaryBox = document.getElementById("summaryBox");
+
+    // --------------------------------------------------------------
+    // Переключение полей событий
+    // --------------------------------------------------------------
+
+    function updateEventFields() {
+
+        const type = eventTypeSelect.value;
+
+        graceFields.style.display = "none";
+        rateChangeFields.style.display = "none";
+        earlyRepaymentFields.style.display = "none";
+
+        if (type === "GRACE") {
+            graceFields.style.display = "block";
+        } else if (type === "RATE_CHANGE") {
+            rateChangeFields.style.display = "block";
+        } else if (type === "EARLY_REPAYMENT") {
+            earlyRepaymentFields.style.display = "block";
+        }
+
+    }
+
+    eventTypeSelect.addEventListener("change", updateEventFields);
+    updateEventFields();
+
+    // --------------------------------------------------------------
+    // Добавление событий
+    // --------------------------------------------------------------
+
+    function renderEventList() {
+
+        eventListDiv.innerHTML = "";
+
+        if (events.length === 0) {
+            eventListDiv.innerHTML = "<div class='event-item'>Нет событий</div>";
+            return;
+        }
+
+        events.forEach((e, idx) => {
+
+            const div = document.createElement("div");
+            div.className = "event-item";
+
+            let text = `[${idx + 1}] ${e.type}`;
+
+            if (e instanceof GraceEvent) {
+                text += ` graceType=${e.graceType} [${e.startPeriod}–${e.endPeriod}]`;
+            } else if (e instanceof RateChangeEvent) {
+                text += ` newRate=${e.newRate}%`;
+            } else if (e instanceof EarlyRepaymentEvent) {
+                text += ` amount=${e.amount}, type=${e.earlyRepaymentType}`;
+            }
+
+            div.textContent = text;
+            eventListDiv.appendChild(div);
+
+        });
+
+    }
+
+    addEventBtn.addEventListener("click", () => {
+
+        const type = eventTypeSelect.value;
+        const dateStr = issueDateInput.value;
+
+        if (!dateStr) {
+            alert("Укажите дату выдачи займа (issueDate).");
+            return;
+        }
+
+        const date = new Date(dateStr);
+
+        try {
+
+            if (type === "GRACE") {
+
+                const graceTypeVal = graceTypeSelect.value;
+                const startPeriod = parseInt(graceStartPeriodInput.value, 10);
+                const endPeriod = parseInt(graceEndPeriodInput.value, 10);
+
+                if (startPeriod < 1) {
+                    throw new Error("Начальный период должен быть >= 1.");
+                }
+                if (endPeriod < startPeriod) {
+                    throw new Error("Конечный период должен быть >= начального.");
+                }
+
+                const ev = new GraceEvent({
+                    id: "grace-" + (events.length + 1),
+                    date,
+                    graceType: graceTypeVal,
+                    startPeriod,
+                    endPeriod
+                });
+
+                events.push(ev);
+
+            } else if (type === "RATE_CHANGE") {
+
+                const newRate = parseFloat(newRateInput.value);
+
+                const ev = new RateChangeEvent({
+                    id: "rate-" + (events.length + 1),
+                    date,
+                    newRate,
+                    rateChangeType: RateChangeType.FIXED
+                });
+
+                events.push(ev);
+
+            } else if (type === "EARLY_REPAYMENT") {
+
+                const amount = parseFloat(earlyAmountInput.value);
+                const earlyType = earlyTypeSelect.value;
+
+                const ev = new EarlyRepaymentEvent({
+                    id: "early-" + (events.length + 1),
+                    date,
+                    amount,
+                    earlyRepaymentType: earlyType
+                });
+
+                events.push(ev);
+
+            } else {
+
+                alert("Для данного типа события пока нет UI-формы.");
+                return;
+
+            }
+
+            renderEventList();
+
+        } catch (e) {
+
+            alert("Ошибка при создании события: " + e.message);
+
+        }
+
+    });
+
+    // --------------------------------------------------------------
+    // Расчёт графика
+    // --------------------------------------------------------------
+
+    function formatNumber(n) {
+        if (n === null || n === undefined) return "";
+        return Number(n).toLocaleString("ru-RU");
+    }
+
+    function calculate() {
+
+        errorBox.textContent = "";
+        scheduleTableBody.innerHTML = "";
+        summaryBox.textContent = "";
+
+        try {
+
+            const principal = parseFloat(principalInput.value);
+            const annualRate = parseFloat(annualRateInput.value);
+            const term = parseInt(termInput.value, 10);
+            const paymentMethod = paymentMethodSelect.value;
+            const issueDate = new Date(issueDateInput.value);
+            const firstPaymentDate = new Date(firstPaymentDateInput.value);
+
+            const loan = new Loan({
+                principal,
+                annualRate,
+                term,
+                issueDate,
+                firstPaymentDate,
+                paymentMethod,
+                events: events.slice()
+            });
+
+            const calendar = new CalendarKZ();
+            const engine = new ScheduleEngine(calendar);
+
+            const schedule = engine.generate(loan);
+            const rows = schedule.getRows();
+
+            // Таблица
+            rows.forEach((row, idx) => {
+
+                const tr = document.createElement("tr");
+
+                let typeLabel = row.rowType;
+                if (row.metadata && row.metadata.technical) {
+                    typeLabel = "ISSUE";
+                }
+
+                const cells = [
+                    idx,
+                    formatKZ(row.paymentDate),
+                    row.days,
+                    formatNumber(row.openingBalance),
+                    formatNumber(row.principal),
+                    formatNumber(row.interest),
+                    formatNumber(row.payment),
+                    formatNumber(row.closingBalance),
+                    typeLabel
+                ];
+
+                cells.forEach(c => {
+                    const td = document.createElement("td");
+                    td.textContent = c;
+                    tr.appendChild(td);
+                });
+
+                scheduleTableBody.appendChild(tr);
+
+            });
+
+            // Сводка
+            const totalInterest = schedule.getTotalInterest();
+            const totalPayment = schedule.getTotalPayment();
+
+            summaryBox.textContent =
+                "TOTAL interest: " + formatNumber(totalInterest) +
+                " | TOTAL payment: " + formatNumber(totalPayment);
+
+        } catch (e) {
+
+            errorBox.textContent = "Ошибка при расчёте:\n" + e.message + "\n\n" + e.stack;
+
+        }
+
+    }
+
+    calculateBtn.addEventListener("click", calculate);
+
+    // Инициализация
+    renderEventList();
+
+</script>
+</body>
+</html>
