@@ -4,9 +4,6 @@
  * Version: 4.0
  *
  * Constants.js
- *
- * Глобальные константы проекта.
- * Не содержит бизнес-логики.
  * ==========================================================
  */
 
@@ -14,7 +11,7 @@ export const PROJECT = Object.freeze({
 
     NAME: "Colvir Schedule & APR Calculator (KZ)",
 
-    VERSION: "4.0-dev1"
+    VERSION: "4.0-dev2"
 
 });
 
@@ -44,8 +41,9 @@ export const DAY_COUNT = Object.freeze({
 
 });
 
-
 export const APR = Object.freeze({
+
+    BASIS_DAYS: 365,
 
     MAX_ITERATIONS: 1000,
 

@@ -7,64 +7,96 @@
  * ==========================================================
  */
 
-import Event from "./Event.js";
+import EventType from "../core/Enums.js";
 import Validation from "../core/Validation.js";
-import { GraceType, EventType } from "../core/Enums.js";
+import DateUtils from "../core/DateUtils.js";
 
-export default class GraceEvent extends Event {
+export default class GraceEvent {
 
     constructor({
 
-        id,
+        type = EventType.GRACE,
 
-        date,
+        startDate,
 
-        graceType,
+        gracePrincipalMonths = 0,
 
-        startPeriod,
+        graceInterestMonths = 0,
 
-        endPeriod,
-
-        enabled = true
+        metadata = {}
 
     }) {
 
-        super({
+        if (type !== EventType.GRACE) {
+            throw new Error(
+                "GraceEvent must have type EventType.GRACE."
+            );
+        }
 
-            id,
+        Validation.requireDate(
+            "startDate",
+            startDate
+        );
 
-            date,
+        Validation.requirePositiveOrZero(
+            "gracePrincipalMonths",
+            gracePrincipalMonths
+        );
 
-            type: EventType.GRACE,
+        Validation.requirePositiveOrZero(
+            "graceInterestMonths",
+            graceInterestMonths
+        );
 
-            enabled
+        if (
+            metadata === null ||
+            typeof metadata !== "object" ||
+            Array.isArray(metadata)
+        ) {
+            throw new TypeError(
+                "metadata must be an object."
+            );
+        }
 
+        this.type = EventType.GRACE;
+
+        this.startDate = new Date(startDate);
+
+        this.gracePrincipalMonths = gracePrincipalMonths;
+
+        this.graceInterestMonths = graceInterestMonths;
+
+        this.metadata = Object.freeze({
+            ...metadata
         });
 
-        if (!Object.values(GraceType).includes(graceType)) {
-
-            throw new Error("Unknown grace type.");
-
-        }
-
-        Validation.requireInteger("startPeriod", startPeriod);
-        Validation.requireInteger("endPeriod", endPeriod);
-
-        if (endPeriod < startPeriod) {
-
-            throw new RangeError(
-                "endPeriod must be greater than or equal to startPeriod."
-            );
-
-        }
-
-        this.graceType = graceType;
-
-        this.startPeriod = startPeriod;
-
-        this.endPeriod = endPeriod;
-
         Object.freeze(this);
+
+    }
+
+    getEffectiveStartDate() {
+        return this.startDate;
+    }
+
+    getGracePrincipalMonths() {
+        return this.gracePrincipalMonths;
+    }
+
+    getGraceInterestMonths() {
+        return this.graceInterestMonths;
+    }
+
+    toJSON() {
+
+        return {
+            type: this.type,
+            startDate: this.startDate,
+            gracePrincipalMonths:
+                this.gracePrincipalMonths,
+            graceInterestMonths:
+                this.graceInterestMonths,
+            metadata: this.metadata
+        };
 
     }
 
