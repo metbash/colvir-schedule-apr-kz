@@ -1,24 +1,14 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev2
+ * Version: 4.0-dev6
  *
  * ScheduleEngine.js
  *
- * Этап 1:
- * Завершение базового движка построения графика.
- *
- * Важные ограничения текущего этапа:
- * - Движок не реализует Grace Period, досрочное погашение,
- *   изменение ставки и ручные корректировки.
- * - Архитектура сохраняется без переписывания.
- * - Используются только существующие классы проекта.
- * - Перенос рабочих дней выполняется только через Calendar.
- * - Первый платеж определяется как issueDate -> firstPaymentDate.
- * - Последний платеж полностью закрывает остаток.
- *
- * Поведение Colvir, требующее следующих этапов,
- * не подменяется предположениями в этом файле.
+ * Этап 4:
+ * - grace periods;
+ * - RATE_CHANGE;
+ * - MANUAL_ADJUSTMENT.
  * ==========================================================
  */
 
@@ -35,8 +25,15 @@ import Money from "../core/Money.js";
 import {
     RowType,
     PaymentMethod,
-    BusinessDayConvention
+    BusinessDayConvention,
+    GraceType
 } from "../core/Enums.js";
+
+import EventPipelineProcessor from
+    "../processors/EventPipelineProcessor.js";
+
+import ManualAdjustmentProcessor from
+    "../processors/ManualAdjustmentProcessor.js";
 
 export default class ScheduleEngine {
 
@@ -44,14 +41,14 @@ export default class ScheduleEngine {
 
         this.calendar = calendar;
 
+        this.eventPipelineProcessor =
+            new EventPipelineProcessor();
+
+        this.manualAdjustmentProcessor =
+            new ManualAdjustmentProcessor();
+
     }
 
-    /**
-     * Построить график.
-     *
-     * @param {Loan} loan
-     * @returns {Schedule}
-     */
     generate(loan) {
 
         const state = new LoanState(loan);
@@ -68,15 +65,6 @@ export default class ScheduleEngine {
 
     }
 
-    /**
-     * Добавить техническую строку выдачи кредита.
-     *
-     * Первая строка отражает факт выдачи кредита.
-     * Отдельный тип ISSUE пока не вводится,
-     * чтобы не менять существующие модели на Этапе 1.
-     *
-     * @param {LoanState} state
-     */
     addIssueRow(state) {
 
         const row = new PaymentRow({
@@ -112,11 +100,6 @@ export default class ScheduleEngine {
 
     }
 
-    /**
-     * Выполнить расчет одного периода.
-     *
-     * @param {LoanState} state
-     */
     processNextPeriod(state) {
 
         const paymentDate = this.calculateNextPaymentDate(state);
@@ -126,55 +109,112 @@ export default class ScheduleEngine {
             paymentDate
         );
 
+        const pipeline =
+            this.eventPipelineProcessor.process(state);
+
         const interest = InterestCalculator.calculate(
             state.balance,
-            state.loan.annualRate,
+            pipeline.effectiveRate,
             period.days
         );
 
-        const payment = this.calculatePayment(
+        let row;
+
+        if (pipeline.graceType === GraceType.PRINCIPAL) {
+
+            row = this.createPaymentRow(
+                state,
+                paymentDate,
+                period,
+                interest,
+                0,
+                interest,
+                state.balance,
+                RowType.GRACE
+            );
+
+        } else if (
+            pipeline.graceType === GraceType.INTEREST
+        ) {
+
+            const principal =
+                this.calculateStandardPrincipal(
+                    state,
+                    interest
+                );
+
+            row = this.createPaymentRow(
+                state,
+                paymentDate,
+                period,
+                principal,
+                principal,
+                0,
+                Money.subtract(
+                    state.balance,
+                    principal
+                ),
+                RowType.GRACE
+            );
+
+        } else if (
+            pipeline.graceType === GraceType.FULL
+        ) {
+
+            row = this.createPaymentRow(
+                state,
+                paymentDate,
+                period,
+                0,
+                0,
+                0,
+                state.balance,
+                RowType.GRACE
+            );
+
+        } else {
+
+            const payment = this.calculatePayment(
+                state,
+                interest,
+                pipeline.effectiveRate
+            );
+
+            const principal = this.calculatePrincipal(
+                state,
+                payment,
+                interest
+            );
+
+            const closingBalance =
+                this.calculateClosingBalance(
+                    state,
+                    principal
+                );
+
+            row = this.createPaymentRow(
+                state,
+                paymentDate,
+                period,
+                payment,
+                principal,
+                interest,
+                closingBalance,
+                RowType.NORMAL
+            );
+
+        }
+
+        row = this.manualAdjustmentProcessor.process(
             state,
-            interest
+            row
         );
 
-        const principal = this.calculatePrincipal(
-            state,
-            payment,
-            interest
-        );
-
-        const closingBalance = this.calculateClosingBalance(
-            state,
-            principal
-        );
-
-        const row = this.createPaymentRow(
-            state,
-            paymentDate,
-            period,
-            payment,
-            principal,
-            interest,
-            closingBalance
-        );
-
-        state.addInterest(interest);
+        state.addInterest(row.interest);
         state.addRow(row);
 
     }
 
-    /**
-     * Создать строку графика.
-     *
-     * @param {LoanState} state
-     * @param {Date} paymentDate
-     * @param {Object} period
-     * @param {number} payment
-     * @param {number} principal
-     * @param {number} interest
-     * @param {number} closingBalance
-     * @returns {PaymentRow}
-     */
     createPaymentRow(
         state,
         paymentDate,
@@ -182,7 +222,8 @@ export default class ScheduleEngine {
         payment,
         principal,
         interest,
-        closingBalance
+        closingBalance,
+        rowType = RowType.NORMAL
     ) {
 
         return new PaymentRow({
@@ -203,28 +244,21 @@ export default class ScheduleEngine {
 
             closingBalance,
 
-            rowType: RowType.NORMAL
+            rowType,
+
+            metadata: {
+                effectiveRate: state.effectiveRate
+            }
 
         });
 
     }
 
-    /**
-     * Рассчитать сумму платежа.
-     *
-     * Текущий этап поддерживает только базовые методы:
-     * - аннуитет;
-     * - равные доли основного долга.
-     *
-     * Grace Period и другие специальные сценарии
-     * должны добавляться на следующих этапах через
-     * существующую архитектуру processors/events.
-     *
-     * @param {LoanState} state
-     * @param {number} interest
-     * @returns {number}
-     */
-    calculatePayment(state, interest) {
+    calculatePayment(
+        state,
+        interest,
+        effectiveRate
+    ) {
 
         const loan = state.loan;
 
@@ -243,7 +277,7 @@ export default class ScheduleEngine {
 
                 return PaymentCalculator.calculateAnnuity(
                     loan.principal,
-                    loan.annualRate,
+                    effectiveRate,
                     loan.term
                 );
 
@@ -266,7 +300,6 @@ export default class ScheduleEngine {
             }
 
             default:
-
                 throw new Error(
                     "Unknown payment method."
                 );
@@ -275,14 +308,40 @@ export default class ScheduleEngine {
 
     }
 
-    /**
-     * Рассчитать погашение основного долга.
-     *
-     * @param {LoanState} state
-     * @param {number} payment
-     * @param {number} interest
-     * @returns {number}
-     */
+    calculateStandardPrincipal(
+        state,
+        interest
+    ) {
+
+        if (this.isLastPayment(state)) {
+
+            return Money.round(state.balance);
+
+        }
+
+        const payment = this.calculatePayment(
+            state,
+            interest,
+            state.effectiveRate
+        );
+
+        let principal = Money.subtract(
+            payment,
+            interest
+        );
+
+        if (principal < 0) {
+            principal = 0;
+        }
+
+        if (principal > state.balance) {
+            principal = state.balance;
+        }
+
+        return Money.round(principal);
+
+    }
+
     calculatePrincipal(
         state,
         payment,
@@ -291,9 +350,7 @@ export default class ScheduleEngine {
 
         if (this.isLastPayment(state)) {
 
-            return Money.round(
-                state.balance
-            );
+            return Money.round(state.balance);
 
         }
 
@@ -303,34 +360,21 @@ export default class ScheduleEngine {
         );
 
         if (principal < 0) {
-
             principal = 0;
-
         }
 
         if (principal > state.balance) {
-
             principal = state.balance;
-
         }
 
         return Money.round(principal);
 
     }
 
-    /**
-     * Рассчитать остаток после платежа.
-     *
-     * @param {LoanState} state
-     * @param {number} principal
-     * @returns {number}
-     */
     calculateClosingBalance(state, principal) {
 
         if (this.isLastPayment(state)) {
-
             return 0;
-
         }
 
         return Money.subtract(
@@ -340,21 +384,6 @@ export default class ScheduleEngine {
 
     }
 
-    /**
-     * Следующая дата платежа.
-     *
-     * Правило проекта:
-     * issueDate -> firstPaymentDate -> далее от firstPaymentDate.
-     *
-     * Нельзя считать первый платеж как issueDate + 1 месяц.
-     *
-     * Для предотвращения накопления ошибок переносов
-     * каждая следующая дата рассчитывается относительно
-     * firstPaymentDate, а не относительно предыдущей даты платежа.
-     *
-     * @param {LoanState} state
-     * @returns {Date}
-     */
     calculateNextPaymentDate(state) {
 
         let paymentDate;
@@ -380,14 +409,6 @@ export default class ScheduleEngine {
 
     }
 
-    /**
-     * Перенести дату через существующий Calendar.
-     *
-     * Внутри ScheduleEngine переносы не реализуются.
-     *
-     * @param {Date} paymentDate
-     * @returns {Date}
-     */
     adjustPaymentDate(paymentDate) {
 
         if (
@@ -406,44 +427,23 @@ export default class ScheduleEngine {
 
     }
 
-    /**
-     * Проверка окончания построения графика.
-     *
-     * @param {LoanState} state
-     * @returns {boolean}
-     */
     isFinished(state) {
 
-        if (
-            state.period >= state.loan.term
-        ) {
-
+        if (state.period >= state.loan.term) {
             return true;
-
         }
 
         if (
             state.period > 0 &&
             Money.isZero(state.balance)
         ) {
-
             return true;
-
         }
 
         return false;
 
     }
 
-    /**
-     * Проверка последнего платежа.
-     *
-     * Последний период должен полностью закрыть остаток,
-     * чтобы устранить накопленные ошибки округления.
-     *
-     * @param {LoanState} state
-     * @returns {boolean}
-     */
     isLastPayment(state) {
 
         return state.period + 1 >= state.loan.term;

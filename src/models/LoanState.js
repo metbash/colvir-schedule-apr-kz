@@ -1,7 +1,7 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
+ * Version: 4.0-dev6
  *
  * LoanState.js
  *
@@ -12,6 +12,10 @@
 import Validation from "../core/Validation.js";
 import Money from "../core/Money.js";
 import DateUtils from "../core/DateUtils.js";
+import {
+    EventType,
+    GraceType
+} from "../core/Enums.js";
 
 export default class LoanState {
 
@@ -23,42 +27,24 @@ export default class LoanState {
 
         this.loan = loan;
 
-        /**
-         * Остаток основного долга
-         */
         this.balance = Money.round(
             loan.principal
         );
 
-        /**
-         * Начисленные проценты
-         */
         this.accruedInterest = 0;
 
-        /**
-         * Номер периода
-         */
         this.period = 0;
 
-        /**
-         * Текущая дата расчета
-         */
         this.currentDate = DateUtils.clone(
             loan.issueDate
         );
 
-        /**
-         * Построенные строки графика
-         */
         this.rows = [];
+
+        this.effectiveRate = loan.annualRate;
 
     }
 
-    /**
-     * Добавить строку графика.
-     *
-     * @param {PaymentRow} row
-     */
     addRow(row) {
 
         this.rows.push(row);
@@ -75,11 +61,6 @@ export default class LoanState {
 
     }
 
-    /**
-     * Общая сумма начисленных процентов.
-     *
-     * @param {number} amount
-     */
     addInterest(amount) {
 
         Validation.requirePositiveOrZero(
@@ -94,11 +75,6 @@ export default class LoanState {
 
     }
 
-    /**
-     * Уменьшить остаток долга.
-     *
-     * @param {number} amount
-     */
     reduceBalance(amount) {
 
         Validation.requirePositiveOrZero(
@@ -113,12 +89,153 @@ export default class LoanState {
 
     }
 
-    /**
-     * Следующий период.
-     */
     nextPeriod() {
 
         this.period++;
+
+    }
+
+    getNextPeriodNumber() {
+
+        return this.period + 1;
+
+    }
+
+    getEnabledEvents() {
+
+        if (
+            !this.loan.events ||
+            !Array.isArray(this.loan.events)
+        ) {
+
+            return [];
+
+        }
+
+        return this.loan.events.filter(
+            (event) => event.enabled
+        );
+
+    }
+
+    getEventsByType(eventType) {
+
+        return this.getEnabledEvents().filter(
+            (event) => event.type === eventType
+        );
+
+    }
+
+    getActiveGraceEvents() {
+
+        const nextPeriod = this.getNextPeriodNumber();
+
+        return this.getEventsByType(
+            EventType.GRACE
+        ).filter((event) => {
+
+            return (
+                event.startPeriod <= nextPeriod &&
+                event.endPeriod >= nextPeriod
+            );
+
+        });
+
+    }
+
+    getDateReachedEvents(eventType) {
+
+        return this.getEventsByType(
+            eventType
+        ).filter((event) => {
+
+            return (
+                event.date.getTime() <=
+                this.currentDate.getTime()
+            );
+
+        });
+
+    }
+
+    /**
+     * Получить manual adjustment events,
+     * относящиеся к расчетной дате строки.
+     *
+     * @param {Date} paymentDate
+     * @returns {Array}
+     */
+    getManualAdjustmentEventsForDate(paymentDate) {
+
+        return this.getEventsByType(
+            EventType.MANUAL_ADJUSTMENT
+        ).filter((event) => {
+
+            return (
+                event.date.getFullYear() === paymentDate.getFullYear() &&
+                event.date.getMonth() === paymentDate.getMonth() &&
+                event.date.getDate() === paymentDate.getDate()
+            );
+
+        });
+
+    }
+
+    hasActiveGrace(graceType) {
+
+        return this.getActiveGraceEvents().some(
+            (event) => event.graceType === graceType
+        );
+
+    }
+
+    hasPrincipalGrace() {
+
+        return this.hasActiveGrace(
+            GraceType.PRINCIPAL
+        );
+
+    }
+
+    hasInterestGrace() {
+
+        return this.hasActiveGrace(
+            GraceType.INTEREST
+        );
+
+    }
+
+    hasFullGrace() {
+
+        return this.hasActiveGrace(
+            GraceType.FULL
+        );
+
+    }
+
+    getActiveRateChangeEvent() {
+
+        const events = this.getDateReachedEvents(
+            EventType.RATE_CHANGE
+        );
+
+        if (events.length === 0) {
+
+            return null;
+
+        }
+
+        return events[events.length - 1];
+
+    }
+
+    applyRateChange(event) {
+
+        if (!event) {
+            return;
+        }
+
+        this.effectiveRate = event.annualRate;
 
     }
 
