@@ -1,599 +1,165 @@
-/**
- * ==========================================================
- * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev10
- *
- * ScheduleEngine.js
- *
- * Этап 6:
- * - grace periods двухкомпонентные (ОД + %);
- * - RATE_CHANGE;
- * - MANUAL_ADJUSTMENT;
- * - PAYMENT_DATE full recalculation;
- * - planned payment change;
- * - RESTRUCTURE.
- * ==========================================================
- */
-
-import LoanState from "../models/LoanState.js";
 import PaymentRow from "../models/PaymentRow.js";
 import Schedule from "../models/Schedule.js";
-
 import InterestCalculator from "../math/InterestCalculator.js";
 import PaymentCalculator from "../math/PaymentCalculator.js";
 import PeriodCalculator from "../math/PeriodCalculator.js";
-
 import DateUtils from "../core/DateUtils.js";
 import Money from "../core/Money.js";
-import {
-    RowType,
-    PaymentMethod,
-    BusinessDayConvention,
-    GraceType,
-    EventType
-} from "../core/Enums.js";
-
-import EventPipelineProcessor from
-    "../processors/EventPipelineProcessor.js";
-
-import ManualAdjustmentProcessor from
-    "../processors/ManualAdjustmentProcessor.js";
+import { RowType, PaymentMethod, DistributionMode } from "../core/Enums.js";
 
 export default class ScheduleEngine {
-
-    constructor(calendar) {
-
+    constructor(calendar = null) {
         this.calendar = calendar;
-
-        this.eventPipelineProcessor =
-            new EventPipelineProcessor();
-
-        this.manualAdjustmentProcessor =
-            new ManualAdjustmentProcessor();
-
     }
 
     generate(loan) {
+        const rows = [];
 
-        const state = new LoanState(loan);
-
-        this.addIssueRow(state);
-
-        while (!this.isFinished(state)) {
-
-            this.processNextPeriod(state);
-
-        }
-
-        return new Schedule(state.rows);
-
-    }
-
-    addIssueRow(state) {
-
-        const row = new PaymentRow({
-
+        rows.push(new PaymentRow({
             period: 0,
-
-            paymentDate: DateUtils.clone(
-                state.loan.issueDate
-            ),
-
+            paymentDate: DateUtils.clone(loan.issueDate),
             days: 0,
-
-            openingBalance: state.loan.principal,
-
+            openingBalance: loan.principal,
             principal: 0,
-
             interest: 0,
-
             payment: 0,
-
-            closingBalance: state.loan.principal,
-
+            closingBalance: loan.principal,
             rowType: RowType.NORMAL,
+            metadata: { technical: true, kind: "ISSUE" }
+        }));
 
-            metadata: {
-                technical: true,
-                kind: "ISSUE"
+        let balance = Money.round(loan.principal);
+        let prevDate = DateUtils.clone(loan.issueDate);
+        const totalPeriods = loan.term;
+        const distributionMode = loan.distributionMode || DistributionMode.FIRST_PAYMENT;
+
+        let deferredPrincipal = 0;
+        let deferredInterest = 0;
+
+        for (let period = 1; period <= totalPeriods; period++) {
+            const paymentDate = DateUtils.addMonths(loan.firstPaymentDate, period - 1);
+            const days = PeriodCalculator.calculate(prevDate, paymentDate).days;
+
+            const grace = loan.gracePeriods.find(g => g.includes(period));
+            const openingBalance = balance;
+
+            let plannedInterest = InterestCalculator.calculate(
+                openingBalance,
+                loan.annualRate,
+                days
+            );
+
+            let plannedPrincipal = calculatePrincipalPart(
+                loan.paymentMethod,
+                openingBalance,
+                loan.annualRate,
+                totalPeriods - period + 1,
+                loan.term
+            );
+
+            if (period === totalPeriods) {
+                plannedPrincipal = openingBalance;
             }
 
-        });
+            plannedPrincipal = Math.min(Money.round(plannedPrincipal), openingBalance);
 
-        state.addRow(row);
+            let principal = plannedPrincipal;
+            let interest = plannedInterest;
+            let rowType = RowType.NORMAL;
 
-    }
+            if (grace) {
+                rowType = RowType.GRACE;
 
-    processNextPeriod(state) {
+                if (grace.odGrace) {
+                    deferredPrincipal = Money.add(deferredPrincipal, plannedPrincipal);
+                    principal = 0;
+                }
 
-        const scheduledPaymentDate =
-            this.calculateNextPaymentDate(state);
+                if (grace.percentGrace) {
+                    deferredInterest = Money.add(deferredInterest, plannedInterest);
+                    interest = 0;
+                }
+            } else {
+                const remainingPeriods = totalPeriods - period + 1;
 
-        const pipeline =
-            this.eventPipelineProcessor.process(state);
+                if (distributionMode === DistributionMode.FIRST_PAYMENT) {
+                    if (deferredPrincipal > 0 || deferredInterest > 0) {
+                        principal = Money.add(principal, deferredPrincipal);
+                        interest = Money.add(interest, deferredInterest);
+                        deferredPrincipal = 0;
+                        deferredInterest = 0;
+                    }
+                }
 
-        let row = this.buildBaseRow(
-            state,
-            scheduledPaymentDate,
-            pipeline
-        );
+                if (distributionMode === DistributionMode.ALL_NEXT_PAYMENTS) {
+                    if (remainingPeriods > 0) {
+                        if (deferredPrincipal > 0) {
+                            let principalShare = Money.round(deferredPrincipal / remainingPeriods);
+                            if (period === totalPeriods) principalShare = deferredPrincipal;
+                            principal = Money.add(principal, principalShare);
+                            deferredPrincipal = Money.subtract(deferredPrincipal, principalShare);
+                        }
 
-        const manualEvents =
-            this.manualAdjustmentProcessor.getEvents(
-                state,
-                row
-            );
+                        if (deferredInterest > 0) {
+                            let interestShare = Money.round(deferredInterest / remainingPeriods);
+                            if (period === totalPeriods) interestShare = deferredInterest;
+                            interest = Money.add(interest, interestShare);
+                            deferredInterest = Money.subtract(deferredInterest, interestShare);
+                        }
+                    }
+                }
+            }
 
-        const paymentDateAdjustment =
-            this.manualAdjustmentProcessor.getPaymentDateAdjustment(
-                manualEvents
-            );
+            if (principal > openingBalance) {
+                principal = openingBalance;
+            }
 
-        if (paymentDateAdjustment) {
+            let closingBalance = Money.round(openingBalance - principal);
+            if (period === totalPeriods) {
+                principal = openingBalance;
+                closingBalance = 0;
+            }
 
-            row = this.rebuildRowWithManualDate(
-                state,
-                pipeline,
-                paymentDateAdjustment.value
-            );
+            const payment = Money.round(principal + interest);
 
-        }
-
-        row = this.manualAdjustmentProcessor.applySimpleAdjustments(
-            row,
-            manualEvents
-        );
-
-        if (manualEvents.length > 0) {
-
-            row = this.manualAdjustmentProcessor.markAsManual(
-                row
-            );
-
-        }
-
-        state.addInterest(row.interest);
-        state.addRow(row);
-
-    }
-
-    buildBaseRow(
-        state,
-        paymentDate,
-        pipeline
-    ) {
-
-        const period = PeriodCalculator.calculate(
-            state.currentDate,
-            paymentDate
-        );
-
-        const interest = InterestCalculator.calculate(
-            state.balance,
-            pipeline.effectiveRate,
-            period.days
-        );
-
-        // Grace period: двухкомпонентная логика (ОД + %)
-        const graceDerived = this.deriveGraceType(
-            state,
-            pipeline
-        );
-
-        if (graceDerived.graceType === GraceType.PRINCIPAL) {
-
-            return this.createPaymentRow(
-                state,
+            rows.push(new PaymentRow({
+                period,
                 paymentDate,
-                period,
-                interest,
-                0,
-                interest,
-                state.balance,
-                RowType.GRACE,
-                pipeline
-            );
+                days,
+                openingBalance,
+                principal: Money.round(principal),
+                interest: Money.round(interest),
+                payment,
+                closingBalance,
+                rowType,
+                metadata: {
+                    grace: !!grace,
+                    deferredPrincipal,
+                    deferredInterest,
+                    distributionMode
+                }
+            }));
 
+            balance = closingBalance;
+            prevDate = paymentDate;
         }
 
-        if (graceDerived.graceType === GraceType.INTEREST) {
+        return new Schedule(rows);
+    }
+}
 
-            const principal =
-                this.calculateStandardPrincipal(
-                    state,
-                    graceDerived.effectiveInterest,
-                    pipeline.effectiveRate,
-                    pipeline.plannedPayment,
-                    pipeline.effectiveTerm
-                );
-
-            return this.createPaymentRow(
-                state,
-                paymentDate,
-                period,
-                principal,
-                principal,
-                0,
-                Money.subtract(
-                    state.balance,
-                    principal
-                ),
-                RowType.GRACE,
-                pipeline
-            );
-
-        }
-
-        if (graceDerived.graceType === GraceType.FULL) {
-
-            return this.createPaymentRow(
-                state,
-                paymentDate,
-                period,
-                0,
-                0,
-                0,
-                state.balance,
-                RowType.GRACE,
-                pipeline
-            );
-
-        }
-
-        // Standard row (no grace or grace already handled)
-        const standardInterest = graceDerived.effectiveInterest;
-
-        const principal =
-            this.calculateStandardPrincipal(
-                state,
-                standardInterest,
-                pipeline.effectiveRate,
-                pipeline.plannedPayment,
-                pipeline.effectiveTerm
-            );
-
-        const payment = Money.round(
-            principal + standardInterest
+function calculatePrincipalPart(paymentMethod, openingBalance, annualRate, remainingPeriods, totalPeriods) {
+    if (paymentMethod === PaymentMethod.ANNUITY) {
+        const annuityPayment = PaymentCalculator.calculateAnnuity(
+            openingBalance,
+            annualRate,
+            remainingPeriods
         );
-
-        const closing = Money.subtract(
-            state.balance,
-            principal
-        );
-
-        return this.createPaymentRow(
-            state,
-            paymentDate,
-            period,
-            principal,
-            standardInterest,
-            payment,
-            closing,
-            RowType.NORMAL,
-            pipeline
-        );
-
+        const monthRate = annualRate / 100 / 12;
+        const interest = Money.round(openingBalance * monthRate);
+        return Money.round(annuityPayment - interest);
     }
 
-    /**
-     * Выводит graceType и effectiveInterest для текущей строки,
-     * учитывая GraceEvent и двухкомпонентную льготу.
-     */
-    deriveGraceType(state, pipeline) {
-
-        const graceEvents = state.loan.getGraceEvents();
-
-        if (graceEvents.length === 0) {
-
-            const interest = InterestCalculator.calculate(
-                state.balance,
-                pipeline.effectiveRate,
-                pipeline.days
-            );
-
-            return {
-                graceType: GraceType.NONE,
-                effectiveInterest: interest
-            };
-
-        }
-
-        const firstGrace = graceEvents[0];
-
-        // Определяем номер текущего периода (1-based)
-        const currentPeriod = state.rows.length;
-
-        // Льготные диапазоны
-        const graceStart = firstGrace.startPeriod;
-        const graceEnd = firstGrace.endPeriod;
-
-        const isGracePeriod =
-            currentPeriod >= graceStart &&
-            currentPeriod <= graceEnd;
-
-        const interest = InterestCalculator.calculate(
-            state.balance,
-            pipeline.effectiveRate,
-            pipeline.days
-        );
-
-        if (!isGracePeriod) {
-
-            return {
-                graceType: GraceType.NONE,
-                effectiveInterest: interest
-            };
-
-        }
-
-        // GraceEvent уже содержит graceType (PRINCIPAL, INTEREST, FULL)
-        const explicitGraceType = firstGrace.graceType;
-
-        if (explicitGraceType === GraceType.PRINCIPAL) {
-
-            return {
-                graceType: GraceType.PRINCIPAL,
-                effectiveInterest: interest
-            };
-
-        }
-
-        if (explicitGraceType === GraceType.INTEREST) {
-
-            return {
-                graceType: GraceType.INTEREST,
-                effectiveInterest: 0
-            };
-
-        }
-
-        if (explicitGraceType === GraceType.FULL) {
-
-            return {
-                graceType: GraceType.FULL,
-                effectiveInterest: 0
-            };
-
-        }
-
-        // Fallback: если что-то не так, считаем без льготы
-        return {
-            graceType: GraceType.NONE,
-            effectiveInterest: interest
-        };
-
-    }
-
-    calculateStandardPrincipal(
-        state,
-        interest,
-        annualRate,
-        plannedPayment,
-        effectiveTerm
-    ) {
-
-        if (
-            state.loan.paymentMethod ===
-            PaymentMethod.ANNUITY
-        ) {
-
-            return PaymentCalculator.annuityPrincipal(
-                state.balance,
-                annualRate,
-                interest,
-                effectiveTerm
-            );
-
-        }
-
-        return PaymentCalculator.equalPrincipal(
-            state.balance,
-            state.loan.term,
-            effectiveTerm
-        );
-
-    }
-
-    createPaymentRow(
-        state,
-        paymentDate,
-        period,
-        principal,
-        interest,
-        payment,
-        closingBalance,
-        rowType,
-        pipeline
-    ) {
-
-        const metadata = {
-            graceType: pipeline.graceType,
-            effectiveRate: pipeline.effectiveRate,
-            plannedPayment: pipeline.plannedPayment
-        };
-
-        return new PaymentRow({
-
-            period: state.rows.length,
-
-            paymentDate: DateUtils.clone(paymentDate),
-
-            days: period.days,
-
-            openingBalance: state.balance,
-
-            principal: Money.round(principal),
-
-            interest: Money.round(interest),
-
-            payment: Money.round(payment),
-
-            closingBalance: Money.round(closingBalance),
-
-            rowType,
-
-            metadata
-
-        });
-
-    }
-
-    calculateNextPaymentDate(
-        state
-    ) {
-
-        const term = state.loan.term;
-        const issueDate = state.loan.issueDate;
-        const firstPaymentDate = state.loan.firstPaymentDate;
-
-        const periodIndex = state.rows.length;
-
-        if (periodIndex === 1) {
-
-            return DateUtils.clone(firstPaymentDate);
-
-        }
-
-        const first = DateUtils.addMonths(
-            issueDate,
-            1
-        );
-
-        // Прибавляем (periodIndex - 1) месяцев к firstPaymentDate
-        const next = DateUtils.addMonths(
-            firstPaymentDate,
-            periodIndex - 1
-        );
-
-        return next;
-
-    }
-
-    isFinished(state) {
-
-        const term = state.loan.term;
-
-        const numberOfPayments =
-            state.rows.length - 1;
-
-        return numberOfPayments >= term;
-
-    }
-
-    rebuildRowWithManualDate(
-        state,
-        pipeline,
-        manualDate
-    ) {
-
-        const period = PeriodCalculator.calculate(
-            state.currentDate,
-            manualDate
-        );
-
-        const interest = InterestCalculator.calculate(
-            state.balance,
-            pipeline.effectiveRate,
-            period.days
-        );
-
-        const graceDerived = this.deriveGraceType(
-            state,
-            pipeline
-        );
-
-        if (graceDerived.graceType === GraceType.PRINCIPAL) {
-
-            return this.createPaymentRow(
-                state,
-                manualDate,
-                period,
-                interest,
-                0,
-                interest,
-                state.balance,
-                RowType.GRACE,
-                pipeline
-            );
-
-        }
-
-        if (graceDerived.graceType === GraceType.INTEREST) {
-
-            const principal =
-                this.calculateStandardPrincipal(
-                    state,
-                    graceDerived.effectiveInterest,
-                    pipeline.effectiveRate,
-                    pipeline.plannedPayment,
-                    pipeline.effectiveTerm
-                );
-
-            return this.createPaymentRow(
-                state,
-                manualDate,
-                period,
-                principal,
-                principal,
-                0,
-                Money.subtract(
-                    state.balance,
-                    principal
-                ),
-                RowType.GRACE,
-                pipeline
-            );
-
-        }
-
-        if (graceDerived.graceType === GraceType.FULL) {
-
-            return this.createPaymentRow(
-                state,
-                manualDate,
-                period,
-                0,
-                0,
-                0,
-                state.balance,
-                RowType.GRACE,
-                pipeline
-            );
-
-        }
-
-        const standardInterest = graceDerived.effectiveInterest;
-
-        const principal =
-            this.calculateStandardPrincipal(
-                state,
-                standardInterest,
-                pipeline.effectiveRate,
-                pipeline.plannedPayment,
-                pipeline.effectiveTerm
-            );
-
-        const payment = Money.round(
-            principal + standardInterest
-        );
-
-        const closing = Money.subtract(
-            state.balance,
-            principal
-        );
-
-        return this.createPaymentRow(
-            state,
-            manualDate,
-            period,
-            principal,
-            standardInterest,
-            payment,
-            closing,
-            RowType.NORMAL,
-            pipeline
-        );
-
-    }
-
+    const equalPrincipal = PaymentCalculator.calculateEqualPrincipal(openingBalance, remainingPeriods);
+    return Money.round(equalPrincipal);
 }
