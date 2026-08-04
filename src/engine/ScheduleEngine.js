@@ -41,8 +41,8 @@ export default class ScheduleEngine {
 
         // Для аннуитета: базовый платёж считается ОДИН РАЗ и больше НЕ МЕНЯЕТСЯ
         // payment = annuityBasePayment = константа во всех периодах кроме последнего
-        // Проценты: Act/360 по фактическим дням — совпадает с Colvir
-        // principal = annuityBasePayment - interest — может немного гулять в каждом периоде
+        // Проценты аннуитета: Act/360 по (days - 1) — конвенция Colvir (день начала периода не включается)
+        // Проценты равных долей: Act/360 по фактическим days — без изменений
         let annuityBasePayment = isAnnuity
             ? PaymentCalculator.calculateAnnuity(loan.principal, loan.annualRate, totalPeriods)
             : 0;
@@ -74,10 +74,13 @@ export default class ScheduleEngine {
             let rowType = RowType.NORMAL;
 
             // ────────────────────────────────────────────────────────────
-            // ПРОЦЕНТЫ: одинаково для аннуитета и равных долей — Act/360
+            // ПРОЦЕНТЫ
+            // Аннуитет:      Act/360 по (days - 1) — конвенция Colvir
+            // Равные доли:   Act/360 по days        — без изменений
             // ────────────────────────────────────────────────────────────
+            const interestDays = isAnnuity ? days - 1 : days;
             let interest = Money.round(
-                InterestCalculator.calculate(openingBalance, loan.annualRate, days)
+                InterestCalculator.calculate(openingBalance, loan.annualRate, interestDays)
             );
 
             let principal;
