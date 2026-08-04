@@ -28,84 +28,126 @@ export default class ScheduleEngine {
             metadata: { technical: true, kind: "ISSUE" }
         }));
 
-        let balance = Money.round(loan.principal);
-        let prevDate = DateUtils.clone(loan.issueDate);
         const totalPeriods = loan.term;
         const distributionMode = loan.distributionMode || DistributionMode.FIRST_PAYMENT;
 
-        let deferredPrincipal = 0;
+        let balance = Money.round(loan.principal);
+        let prevDate = DateUtils.clone(loan.issueDate);
+
         let deferredInterest = 0;
+        let afterGraceEqualPrincipal = null;
+        let firstPaymentAfterOdGraceHandled = false;
 
         for (let period = 1; period <= totalPeriods; period++) {
-            const paymentDate = DateUtils.addMonths(loan.firstPaymentDate, period - 1);
-            const days = PeriodCalculator.calculate(prevDate, paymentDate).days;
+            let plannedDate;
 
-            const grace = loan.gracePeriods.find(g => g.includes(period));
-            const openingBalance = balance;
-
-            let plannedInterest = InterestCalculator.calculate(
-                openingBalance,
-                loan.annualRate,
-                days
-            );
-
-            let plannedPrincipal = calculatePrincipalPart(
-                loan.paymentMethod,
-                openingBalance,
-                loan.annualRate,
-                totalPeriods - period + 1,
-                loan.term
-            );
-
-            if (period === totalPeriods) {
-                plannedPrincipal = openingBalance;
+            if (period === totalPeriods && loan.lastPaymentDate) {
+                plannedDate = DateUtils.clone(loan.lastPaymentDate);
+            } else {
+                plannedDate = DateUtils.addMonths(loan.firstPaymentDate, period - 1);
             }
 
-            plannedPrincipal = Math.min(Money.round(plannedPrincipal), openingBalance);
+            const paymentDate = this.calendar
+                ? this.calendar.adjustPaymentDate(plannedDate)
+                : plannedDate;
 
-            let principal = plannedPrincipal;
-            let interest = plannedInterest;
+            const days = PeriodCalculator.calculate(prevDate, paymentDate).days;
+            const openingBalance = Money.round(balance);
+
+            const grace = loan.gracePeriods.find(g =>
+                g && typeof g.includes === "function" && g.includes(period)
+            );
+
+            const remainingPeriods = totalPeriods - period + 1;
             let rowType = RowType.NORMAL;
+
+            let principal;
+            let interest = Money.round(
+                InterestCalculator.calculate(openingBalance, loan.annualRate, days)
+            );
+
+            if (loan.paymentMethod === PaymentMethod.EQUAL_PRINCIPAL) {
+                if (afterGraceEqualPrincipal !== null) {
+                    principal = period === totalPeriods
+                        ? openingBalance
+                        : Money.round(afterGraceEqualPrincipal);
+                } else {
+                    principal = period === totalPeriods
+                        ? openingBalance
+                        : Money.round(loan.principal / totalPeriods);
+                }
+            } else {
+                principal = calculateAnnuityPrincipal(
+                    openingBalance,
+                    loan.annualRate,
+                    remainingPeriods
+                );
+
+                if (period === totalPeriods || principal > openingBalance) {
+                    principal = openingBalance;
+                }
+            }
 
             if (grace) {
                 rowType = RowType.GRACE;
 
                 if (grace.odGrace) {
-                    deferredPrincipal = Money.add(deferredPrincipal, plannedPrincipal);
                     principal = 0;
                 }
 
                 if (grace.percentGrace) {
-                    deferredInterest = Money.add(deferredInterest, plannedInterest);
+                    deferredInterest = Money.add(deferredInterest, interest);
                     interest = 0;
                 }
             } else {
-                const remainingPeriods = totalPeriods - period + 1;
+                if (
+                    distributionMode === DistributionMode.ALL_NEXT_PAYMENTS &&
+                    loan.paymentMethod === PaymentMethod.EQUAL_PRINCIPAL &&
+                    afterGraceEqualPrincipal === null
+                ) {
+                    const hadOdGraceBefore = loan.gracePeriods.some(g =>
+                        g.odGrace && g.endPeriod < period
+                    );
 
-                if (distributionMode === DistributionMode.FIRST_PAYMENT) {
-                    if (deferredPrincipal > 0 || deferredInterest > 0) {
-                        principal = Money.add(principal, deferredPrincipal);
-                        interest = Money.add(interest, deferredInterest);
-                        deferredPrincipal = 0;
-                        deferredInterest = 0;
+                    if (hadOdGraceBefore) {
+                        afterGraceEqualPrincipal = remainingPeriods > 0
+                            ? Money.round(openingBalance / remainingPeriods)
+                            : openingBalance;
+
+                        principal = period === totalPeriods
+                            ? openingBalance
+                            : Money.round(afterGraceEqualPrincipal);
                     }
                 }
 
-                if (distributionMode === DistributionMode.ALL_NEXT_PAYMENTS) {
-                    if (remainingPeriods > 0) {
-                        if (deferredPrincipal > 0) {
-                            let principalShare = Money.round(deferredPrincipal / remainingPeriods);
-                            if (period === totalPeriods) principalShare = deferredPrincipal;
-                            principal = Money.add(principal, principalShare);
-                            deferredPrincipal = Money.subtract(deferredPrincipal, principalShare);
-                        }
+                if (
+                    distributionMode === DistributionMode.FIRST_PAYMENT &&
+                    loan.paymentMethod === PaymentMethod.EQUAL_PRINCIPAL &&
+                    !firstPaymentAfterOdGraceHandled
+                ) {
+                    const hadOdGraceBefore = loan.gracePeriods.some(g =>
+                        g.odGrace && g.endPeriod < period
+                    );
 
-                        if (deferredInterest > 0) {
-                            let interestShare = Money.round(deferredInterest / remainingPeriods);
-                            if (period === totalPeriods) interestShare = deferredInterest;
-                            interest = Money.add(interest, interestShare);
-                            deferredInterest = Money.subtract(deferredInterest, interestShare);
+                    if (hadOdGraceBefore) {
+                        const skippedPrincipal = calculateSkippedPrincipalUntil(loan, period - 1);
+                        if (skippedPrincipal > 0) {
+                            principal = Money.add(principal, skippedPrincipal);
                         }
+                        firstPaymentAfterOdGraceHandled = true;
+                    }
+                }
+
+                if (deferredInterest > 0) {
+                    if (distributionMode === DistributionMode.FIRST_PAYMENT) {
+                        interest = Money.add(interest, deferredInterest);
+                        deferredInterest = 0;
+                    } else if (distributionMode === DistributionMode.ALL_NEXT_PAYMENTS) {
+                        const share = period === totalPeriods
+                            ? deferredInterest
+                            : Money.round(deferredInterest / remainingPeriods);
+                        interest = Money.add(interest, share);
+                        deferredInterest = Money.subtract(deferredInterest, share);
                     }
                 }
             }
@@ -115,6 +157,7 @@ export default class ScheduleEngine {
             }
 
             let closingBalance = Money.round(openingBalance - principal);
+
             if (period === totalPeriods) {
                 principal = openingBalance;
                 closingBalance = 0;
@@ -134,9 +177,10 @@ export default class ScheduleEngine {
                 rowType,
                 metadata: {
                     grace: !!grace,
-                    deferredPrincipal,
-                    deferredInterest,
-                    distributionMode
+                    distributionMode,
+                    plannedDate,
+                    adjustedDate: paymentDate,
+                    afterGraceEqualPrincipal
                 }
             }));
 
@@ -148,18 +192,34 @@ export default class ScheduleEngine {
     }
 }
 
-function calculatePrincipalPart(paymentMethod, openingBalance, annualRate, remainingPeriods, totalPeriods) {
-    if (paymentMethod === PaymentMethod.ANNUITY) {
-        const annuityPayment = PaymentCalculator.calculateAnnuity(
-            openingBalance,
-            annualRate,
-            remainingPeriods
-        );
-        const monthRate = annualRate / 100 / 12;
-        const interest = Money.round(openingBalance * monthRate);
-        return Money.round(annuityPayment - interest);
+function calculateAnnuityPrincipal(openingBalance, annualRate, remainingPeriods) {
+    const payment = PaymentCalculator.calculateAnnuity(
+        openingBalance,
+        annualRate,
+        remainingPeriods
+    );
+    const monthlyRate = annualRate / 100 / 12;
+    const interestPart = Money.round(openingBalance * monthlyRate);
+    return Money.round(payment - interestPart);
+}
+
+function calculateSkippedPrincipalUntil(loan, untilPeriod) {
+    if (loan.paymentMethod !== PaymentMethod.EQUAL_PRINCIPAL) {
+        return 0;
     }
 
-    const equalPrincipal = PaymentCalculator.calculateEqualPrincipal(openingBalance, remainingPeriods);
-    return Money.round(equalPrincipal);
+    const regularPrincipal = Money.round(loan.principal / loan.term);
+    let skipped = 0;
+
+    for (let p = 1; p <= untilPeriod; p++) {
+        const grace = loan.gracePeriods.find(g =>
+            g && typeof g.includes === "function" && g.includes(p)
+        );
+
+        if (grace && grace.odGrace) {
+            skipped = Money.add(skipped, regularPrincipal);
+        }
+    }
+
+    return skipped;
 }

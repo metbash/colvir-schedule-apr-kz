@@ -32,13 +32,13 @@
         .summary-item .label { font-size: 12px; color: #667085; }
         .summary-item .value { margin-top: 4px; font-size: 18px; font-weight: 700; }
 
-        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .row-3 { display: grid; grid-template-columns: 1.1fr 0.9fr 0.9fr; gap: 8px; }
         .mode-tabs { display: flex; gap: 8px; margin: 8px 0 12px; }
         .mode-tabs button { margin-top: 0; flex: 1; }
         .mode-tabs button.active { background: #0f5fbf; }
         .panel { display: none; }
         .panel.active { display: block; }
+
+        .row-3 { display: grid; grid-template-columns: 1.1fr 0.9fr 0.9fr; gap: 8px; }
 
         .months-head {
             display: grid;
@@ -79,6 +79,16 @@
             color: #667085;
             margin-top: 6px;
         }
+        .debug-box {
+            font-size: 12px;
+            color: #334155;
+            background: #f8fafc;
+            border: 1px dashed #cbd5e1;
+            padding: 10px;
+            border-radius: 8px;
+            white-space: pre-wrap;
+            margin-top: 12px;
+        }
         @media (max-width: 1100px) {
             .grid { grid-template-columns: 1fr; }
         }
@@ -93,22 +103,22 @@
             <div class="section-title">Параметры займа</div>
 
             <label>Сумма кредита</label>
-            <input id="principal" type="number" value="1000000" step="0.01">
+            <input id="principal" type="number" value="230575460" step="0.01">
 
             <label>Ставка, % годовых</label>
-            <input id="annualRate" type="number" value="25" step="0.01">
+            <input id="annualRate" type="number" value="20" step="0.01">
 
             <label>Срок, месяцев</label>
             <input id="term" type="number" value="12" step="1">
 
             <label>Дата начала / выдачи</label>
-            <input id="issueDate" type="date" value="2026-07-15">
+            <input id="issueDate" type="date" value="2026-06-25">
 
             <label>Дата первого платежа</label>
-            <input id="firstPaymentDate" type="date" value="2026-08-15">
+            <input id="firstPaymentDate" type="date" value="2026-07-21">
 
             <label>Дата последнего платежа</label>
-            <input id="lastPaymentDate" type="date" value="2027-07-15">
+            <input id="lastPaymentDate" type="date" value="2027-06-25">
 
             <label>Метод погашения</label>
             <select id="paymentMethod">
@@ -121,8 +131,8 @@
 
             <label>Распределение отложенного платежа</label>
             <select id="distributionMode">
+                <option value="ALL_NEXT_PAYMENTS" selected>На все предстоящие платежи</option>
                 <option value="FIRST_PAYMENT">На первый предстоящий платеж</option>
-                <option value="ALL_NEXT_PAYMENTS">На все предстоящие платежи</option>
             </select>
 
             <div class="mode-tabs">
@@ -134,7 +144,7 @@
                 <div class="row-3">
                     <div>
                         <label>Льготных месяцев</label>
-                        <input id="simpleMonths" type="number" min="1" step="1" value="2">
+                        <input id="simpleMonths" type="number" min="1" step="1" value="3">
                     </div>
                     <div>
                         <label>ОД</label>
@@ -174,7 +184,7 @@
 
             <button id="calcBtn">Рассчитать график</button>
             <div id="errorBox" class="error"></div>
-            <div id="debugBox" class="small-note" style="white-space:pre-wrap; margin-top:10px;"></div>
+            <div id="debugBox" class="debug-box"></div>
         </div>
 
         <div class="card">
@@ -207,7 +217,7 @@
 import Loan from "./src/models/Loan.js";
 import GracePeriod from "./src/models/GracePeriod.js";
 import ScheduleEngine from "./src/engine/ScheduleEngine.js";
-import { PaymentMethod, DistributionMode } from "./src/core/Enums.js";
+import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js";
 
 const els = {
     principal: document.getElementById("principal"),
@@ -218,18 +228,22 @@ const els = {
     lastPaymentDate: document.getElementById("lastPaymentDate"),
     paymentMethod: document.getElementById("paymentMethod"),
     distributionMode: document.getElementById("distributionMode"),
+
     modeSimpleBtn: document.getElementById("modeSimpleBtn"),
     modeManualBtn: document.getElementById("modeManualBtn"),
     simplePanel: document.getElementById("simplePanel"),
     manualPanel: document.getElementById("manualPanel"),
+
     simpleMonths: document.getElementById("simpleMonths"),
     simpleOd: document.getElementById("simpleOd"),
     simplePct: document.getElementById("simplePct"),
     applySimpleBtn: document.getElementById("applySimpleBtn"),
     clearSimpleBtn: document.getElementById("clearSimpleBtn"),
+
     fillManualBtn: document.getElementById("fillManualBtn"),
     clearManualBtn: document.getElementById("clearManualBtn"),
     manualRows: document.getElementById("manualRows"),
+
     calcBtn: document.getElementById("calcBtn"),
     errorBox: document.getElementById("errorBox"),
     debugBox: document.getElementById("debugBox"),
@@ -242,6 +256,10 @@ let currentMode = "simple";
 function debug(msg) {
     els.debugBox.textContent += msg + "\n";
     console.log(msg);
+}
+
+function clearDebug() {
+    els.debugBox.textContent = "";
 }
 
 function num(v) {
@@ -258,6 +276,16 @@ function formatDate(d) {
     return `${String(dt.getDate()).padStart(2, "0")}.${String(dt.getMonth() + 1).padStart(2, "0")}.${dt.getFullYear()}`;
 }
 
+function addMonthsSafe(dateValue, monthsToAdd) {
+    const d = new Date(dateValue);
+    const day = d.getDate();
+    d.setMonth(d.getMonth() + monthsToAdd);
+    if (d.getDate() < day) {
+        d.setDate(0);
+    }
+    return d;
+}
+
 function setMode(mode) {
     currentMode = mode;
     els.modeSimpleBtn.classList.toggle("active", mode === "simple");
@@ -270,52 +298,66 @@ function clearManualRows() {
     els.manualRows.innerHTML = "";
 }
 
+function createMonthRow(period, paymentDate, odChecked = false, pctChecked = false) {
+    const row = document.createElement("div");
+    row.className = "month-row";
+    row.dataset.period = String(period);
+    row.innerHTML = `
+        <div class="period">${period}</div>
+        <div class="date">${formatDate(paymentDate)}</div>
+        <div class="check-wrap"><input type="checkbox" class="m-od" ${odChecked ? "checked" : ""}></div>
+        <div class="check-wrap"><input type="checkbox" class="m-pct" ${pctChecked ? "checked" : ""}></div>
+    `;
+    return row;
+}
+
 function buildManualRows() {
     clearManualRows();
     const term = parseInt(els.term.value, 10) || 0;
+    const calendar = new KazakhstanBusinessCalendar();
+
     for (let period = 1; period <= term; period++) {
-        const paymentDate = new Date(els.firstPaymentDate.value);
-        paymentDate.setMonth(paymentDate.getMonth() + (period - 1));
-        const row = document.createElement("div");
-        row.className = "month-row";
-        row.innerHTML = `
-            <div class="period">${period}</div>
-            <div class="date">${formatDate(paymentDate)}</div>
-            <div class="check-wrap"><input type="checkbox" class="m-od"></div>
-            <div class="check-wrap"><input type="checkbox" class="m-pct"></div>
-        `;
-        els.manualRows.appendChild(row);
+        const planned = addMonthsSafe(els.firstPaymentDate.value, period - 1);
+        const paymentDate = calendar.adjustPaymentDate(planned);
+        els.manualRows.appendChild(createMonthRow(period, paymentDate, false, false));
     }
 }
 
 function applySimpleGrace() {
     clearManualRows();
+
     const months = Math.max(1, parseInt(els.simpleMonths.value, 10) || 1);
-    for (let i = 0; i < months; i++) {
-        const period = i + 1;
-        const paymentDate = new Date(els.firstPaymentDate.value);
-        paymentDate.setMonth(paymentDate.getMonth() + i);
-        const row = document.createElement("div");
-        row.className = "month-row";
-        row.innerHTML = `
-            <div class="period">${period}</div>
-            <div class="date">${formatDate(paymentDate)}</div>
-            <div class="check-wrap"><input type="checkbox" class="m-od" ${els.simpleOd.checked ? "checked" : ""}></div>
-            <div class="check-wrap"><input type="checkbox" class="m-pct" ${els.simplePct.checked ? "checked" : ""}></div>
-        `;
-        els.manualRows.appendChild(row);
+    const term = parseInt(els.term.value, 10) || 0;
+    const maxMonths = Math.min(months, term);
+    const calendar = new KazakhstanBusinessCalendar();
+
+    for (let period = 1; period <= maxMonths; period++) {
+        const planned = addMonthsSafe(els.firstPaymentDate.value, period - 1);
+        const paymentDate = calendar.adjustPaymentDate(planned);
+
+        els.manualRows.appendChild(
+            createMonthRow(
+                period,
+                paymentDate,
+                els.simpleOd.checked,
+                els.simplePct.checked
+            )
+        );
     }
+
     setMode("manual");
 }
 
 function readGracePeriods() {
     const rows = [...els.manualRows.querySelectorAll(".month-row")];
     const periods = [];
-    rows.forEach((row, index) => {
+
+    for (const row of rows) {
+        const period = Number(row.dataset.period);
         const od = row.querySelector(".m-od").checked;
         const pct = row.querySelector(".m-pct").checked;
+
         if (od || pct) {
-            const period = index + 1;
             periods.push(new GracePeriod({
                 startPeriod: period,
                 endPeriod: period,
@@ -323,12 +365,14 @@ function readGracePeriods() {
                 percentGrace: pct
             }));
         }
-    });
+    }
+
     return periods;
 }
 
 function renderSchedule(schedule) {
     els.scheduleBody.innerHTML = "";
+
     schedule.rows.forEach((row, idx) => {
         const tr = document.createElement("tr");
         tr.innerHTML = `
@@ -346,12 +390,14 @@ function renderSchedule(schedule) {
     });
 
     els.summary.innerHTML = "";
+
     const items = [
         ["Общий ОД", schedule.totalPrincipal()],
         ["Общие проценты", schedule.totalInterest()],
         ["Общая сумма", schedule.totalPayment()],
         ["Строк графика", schedule.length]
     ];
+
     for (const [label, value] of items) {
         const el = document.createElement("div");
         el.className = "summary-item";
@@ -361,25 +407,49 @@ function renderSchedule(schedule) {
 }
 
 els.modeSimpleBtn.addEventListener("click", () => setMode("simple"));
+
 els.modeManualBtn.addEventListener("click", () => {
     setMode("manual");
-    if (!els.manualRows.children.length) buildManualRows();
+    if (!els.manualRows.children.length) {
+        buildManualRows();
+    }
 });
-els.applySimpleBtn.addEventListener("click", applySimpleGrace);
+
+els.applySimpleBtn.addEventListener("click", () => {
+    applySimpleGrace();
+});
+
 els.clearSimpleBtn.addEventListener("click", () => {
-    clearManualRows();
-    els.simpleMonths.value = 1;
+    els.simpleMonths.value = 3;
     els.simpleOd.checked = true;
     els.simplePct.checked = false;
 });
-els.fillManualBtn.addEventListener("click", buildManualRows);
-els.clearManualBtn.addEventListener("click", clearManualRows);
+
+els.fillManualBtn.addEventListener("click", () => {
+    buildManualRows();
+});
+
+els.clearManualBtn.addEventListener("click", () => {
+    clearManualRows();
+});
+
+els.term.addEventListener("change", () => {
+    if (currentMode === "manual") {
+        buildManualRows();
+    }
+});
+
+els.firstPaymentDate.addEventListener("change", () => {
+    if (currentMode === "manual" && els.manualRows.children.length) {
+        buildManualRows();
+    }
+});
 
 els.calcBtn.addEventListener("click", () => {
     els.errorBox.textContent = "";
     els.scheduleBody.innerHTML = "";
     els.summary.innerHTML = "";
-    els.debugBox.textContent = "";
+    clearDebug();
 
     try {
         if (!els.manualRows.children.length) {
@@ -392,6 +462,8 @@ els.calcBtn.addEventListener("click", () => {
 
         const gracePeriods = readGracePeriods();
 
+        debug("DISTRIBUTION MODE:");
+        debug(els.distributionMode.value);
         debug("GRACE PERIODS:");
         debug(JSON.stringify(gracePeriods, null, 2));
 
@@ -403,13 +475,28 @@ els.calcBtn.addEventListener("click", () => {
             firstPaymentDate: new Date(els.firstPaymentDate.value),
             lastPaymentDate: els.lastPaymentDate.value ? new Date(els.lastPaymentDate.value) : null,
             paymentMethod: els.paymentMethod.value,
+            distributionMode: els.distributionMode.value,
             gracePeriods
         });
 
-        const engine = new ScheduleEngine();
+        debug("LOAN CREATED");
+        debug(JSON.stringify({
+            principal: loan.principal,
+            annualRate: loan.annualRate,
+            term: loan.term,
+            paymentMethod: loan.paymentMethod,
+            distributionMode: loan.distributionMode,
+            gracePeriods: loan.gracePeriods
+        }, null, 2));
+
+        const engine = new ScheduleEngine(new KazakhstanBusinessCalendar());
         const schedule = engine.generate(loan);
+
         renderSchedule(schedule);
-        debug("OK");
+
+        debug("SCHEDULE CREATED");
+        debug(`ROWS: ${schedule.rows.length}`);
+        debug("RENDER OK");
     } catch (e) {
         console.error(e);
         els.errorBox.textContent = e.stack || e.message || String(e);

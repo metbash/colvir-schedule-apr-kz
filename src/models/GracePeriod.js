@@ -1,3 +1,5 @@
+import { DistributionMode } from "../core/Enums.js";
+
 export default class GracePeriod {
     constructor({
         startPeriod,

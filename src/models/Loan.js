@@ -1,5 +1,5 @@
 import Validation from "../core/Validation.js";
-import { PaymentMethod } from "../core/Enums.js";
+import { PaymentMethod, DistributionMode } from "../core/Enums.js";
 
 export default class Loan {
     constructor({
@@ -10,7 +10,8 @@ export default class Loan {
         firstPaymentDate,
         lastPaymentDate = null,
         paymentMethod,
-        gracePeriods = []
+        gracePeriods = [],
+        distributionMode = DistributionMode.FIRST_PAYMENT
     }) {
         Validation.requirePositive("principal", principal);
         Validation.requirePositiveOrZero("annualRate", annualRate);
@@ -26,6 +27,10 @@ export default class Loan {
             throw new Error("Unknown payment method.");
         }
 
+        if (!Object.values(DistributionMode).includes(distributionMode)) {
+            throw new Error("Unknown distribution mode.");
+        }
+
         if (!Array.isArray(gracePeriods)) {
             throw new TypeError("gracePeriods must be an array.");
         }
@@ -37,13 +42,8 @@ export default class Loan {
         this.firstPaymentDate = new Date(firstPaymentDate);
         this.lastPaymentDate = lastPaymentDate ? new Date(lastPaymentDate) : null;
         this.paymentMethod = paymentMethod;
-        this.gracePeriods = gracePeriods.map(g => ({
-            startPeriod: Number(g.startPeriod),
-            endPeriod: Number(g.endPeriod),
-            odGrace: Boolean(g.odGrace),
-            percentGrace: Boolean(g.percentGrace),
-            distributionMode: g.distributionMode
-        }));
+        this.distributionMode = distributionMode;
+        this.gracePeriods = gracePeriods;
 
         Object.freeze(this);
     }
