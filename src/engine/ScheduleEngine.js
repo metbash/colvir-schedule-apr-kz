@@ -39,8 +39,10 @@ export default class ScheduleEngine {
         let afterGraceEqualPrincipal = null;
         let firstPaymentAfterOdGraceHandled = false;
 
-        // Для аннуитета: базовый платёж считается ОДИН РАЗ от полного срока
-        // Проценты в каждой строке: balance * rate/12 (условный месяц — как в Colvir)
+        // Для аннуитета: базовый платёж считается ОДИН РАЗ и больше НЕ МЕНЯЕТСЯ
+        // payment = annuityBasePayment = константа во всех периодах кроме последнего
+        // Проценты: Act/360 по фактическим дням — совпадает с Colvir
+        // principal = annuityBasePayment - interest — может немного гулять в каждом периоде
         let annuityBasePayment = isAnnuity
             ? PaymentCalculator.calculateAnnuity(loan.principal, loan.annualRate, totalPeriods)
             : 0;
@@ -71,19 +73,12 @@ export default class ScheduleEngine {
             const remainingPeriods = totalPeriods - period + 1;
             let rowType = RowType.NORMAL;
 
-            // ─────────────────────────────────────────────────────────────
-            // ПРОЦЕНТЫ:
-            //   Аннуитет  → условный месяц (rate/12), как в Colvir
-            //   Равные доли → Act/360 (фактические дни)
-            // ─────────────────────────────────────────────────────────────
-            let interest;
-            if (isAnnuity) {
-                interest = Money.round(openingBalance * loan.annualRate / 100 / 12);
-            } else {
-                interest = Money.round(
-                    InterestCalculator.calculate(openingBalance, loan.annualRate, days)
-                );
-            }
+            // ────────────────────────────────────────────────────────────
+            // ПРОЦЕНТЫ: одинаково для аннуитета и равных долей — Act/360
+            // ────────────────────────────────────────────────────────────
+            let interest = Money.round(
+                InterestCalculator.calculate(openingBalance, loan.annualRate, days)
+            );
 
             let principal;
 
@@ -96,7 +91,7 @@ export default class ScheduleEngine {
                     // Льготный период по ОД — тело не погашаем
                     principal = 0;
                 } else {
-                    // Пересчёт базового платежа после льготы (ALL_NEXT_PAYMENTS)
+                    // Пересчёт annuityBasePayment после льготы по ОД (ALL_NEXT_PAYMENTS)
                     if (
                         !annuityRecalculated &&
                         distributionMode === DistributionMode.ALL_NEXT_PAYMENTS
@@ -114,14 +109,15 @@ export default class ScheduleEngine {
                         }
                     }
 
-                    // principal = annuityPayment - interest (оба считались по rate/12)
+                    // payment = annuityBasePayment (константа)
+                    // principal = payment - interest (немного гуляет из-за Act/360)
                     principal = Money.round(annuityBasePayment - interest);
                     if (principal < 0) principal = 0;
                     if (principal > openingBalance) principal = openingBalance;
                 }
 
             } else {
-                // ─── РАВНЫЕ ДОЛИ ──────────────────────────────────────
+                // ─── РАВНЫЕ ДОЛИ — без изменений ────────────────
                 if (afterGraceEqualPrincipal !== null) {
                     principal = period === totalPeriods
                         ? openingBalance
@@ -133,9 +129,9 @@ export default class ScheduleEngine {
                 }
             }
 
-            // ─────────────────────────────────────────────────────────────
+            // ────────────────────────────────────────────────────────────
             // ЛЬГОТНЫЕ ПЕРИОДЫ
-            // ─────────────────────────────────────────────────────────────
+            // ────────────────────────────────────────────────────────────
             if (grace) {
                 rowType = RowType.GRACE;
 
