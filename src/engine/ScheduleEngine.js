@@ -30,6 +30,7 @@ export default class ScheduleEngine {
 
         const totalPeriods = loan.term;
         const distributionMode = loan.distributionMode || DistributionMode.FIRST_PAYMENT;
+        const isAnnuity = loan.paymentMethod === PaymentMethod.ANNUITY;
 
         let balance = Money.round(loan.principal);
         let prevDate = DateUtils.clone(loan.issueDate);
@@ -37,6 +38,15 @@ export default class ScheduleEngine {
         let deferredInterest = 0;
         let afterGraceEqualPrincipal = null;
         let firstPaymentAfterOdGraceHandled = false;
+
+        // Для аннуитета считаем базовый платёж один раз от полного срока
+        // Если будет льгота по ОД — пересчитаем хвост после льготы
+        let annuityBasePayment = isAnnuity
+            ? PaymentCalculator.calculateAnnuity(loan.principal, loan.annualRate, totalPeriods)
+            : 0;
+
+        // Флаг: нужно ли пересчитать аннуитетный платёж после льготного периода
+        let annuityRecalculated = false;
 
         for (let period = 1; period <= totalPeriods; period++) {
             let plannedDate;
@@ -61,12 +71,56 @@ export default class ScheduleEngine {
             const remainingPeriods = totalPeriods - period + 1;
             let rowType = RowType.NORMAL;
 
-            let principal;
+            // Проценты всегда по Act/360 — для обоих методов
             let interest = Money.round(
                 InterestCalculator.calculate(openingBalance, loan.annualRate, days)
             );
 
-            if (loan.paymentMethod === PaymentMethod.EQUAL_PRINCIPAL) {
+            let principal;
+
+            if (isAnnuity) {
+                // --- АННУИТЕТ ---
+                if (!grace) {
+                    // Пересчитываем базовый платёж один раз — в первый период
+                    // после льготного периода по ОД (если был)
+                    if (
+                        !annuityRecalculated &&
+                        distributionMode === DistributionMode.ALL_NEXT_PAYMENTS
+                    ) {
+                        const hadOdGraceBefore = loan.gracePeriods.some(g =>
+                            g.odGrace && g.endPeriod < period
+                        );
+                        if (hadOdGraceBefore) {
+                            annuityBasePayment = PaymentCalculator.calculateAnnuity(
+                                openingBalance,
+                                loan.annualRate,
+                                remainingPeriods
+                            );
+                            annuityRecalculated = true;
+                        }
+                    }
+                }
+
+                if (period === totalPeriods) {
+                    // Последний период: закрываем остаток полностью
+                    principal = openingBalance;
+                } else if (!grace || !grace.odGrace) {
+                    // Обычный период или льгота только по процентам
+                    // principal = annuityPayment - interest
+                    // Но interest здесь Act/360 — значит principal может чуть гулять
+                    principal = Money.round(annuityBasePayment - interest);
+
+                    // Защита от отрицательного principal
+                    if (principal < 0) principal = 0;
+                    // Защита от превышения остатка
+                    if (principal > openingBalance) principal = openingBalance;
+                } else {
+                    // Льготный период по ОД — тело не гасим
+                    principal = 0;
+                }
+
+            } else {
+                // --- РАВНЫЕ ДОЛИ ---
                 if (afterGraceEqualPrincipal !== null) {
                     principal = period === totalPeriods
                         ? openingBalance
@@ -76,18 +130,9 @@ export default class ScheduleEngine {
                         ? openingBalance
                         : Money.round(loan.principal / totalPeriods);
                 }
-            } else {
-                principal = calculateAnnuityPrincipal(
-                    openingBalance,
-                    loan.annualRate,
-                    remainingPeriods
-                );
-
-                if (period === totalPeriods || principal > openingBalance) {
-                    principal = openingBalance;
-                }
             }
 
+            // --- Обработка льготных периодов ---
             if (grace) {
                 rowType = RowType.GRACE;
 
@@ -99,10 +144,12 @@ export default class ScheduleEngine {
                     deferredInterest = Money.add(deferredInterest, interest);
                     interest = 0;
                 }
+
             } else {
+                // Первый платёж после льготы — равные доли, ALL_NEXT_PAYMENTS
                 if (
                     distributionMode === DistributionMode.ALL_NEXT_PAYMENTS &&
-                    loan.paymentMethod === PaymentMethod.EQUAL_PRINCIPAL &&
+                    !isAnnuity &&
                     afterGraceEqualPrincipal === null
                 ) {
                     const hadOdGraceBefore = loan.gracePeriods.some(g =>
@@ -120,9 +167,10 @@ export default class ScheduleEngine {
                     }
                 }
 
+                // Первый платёж после льготы — равные доли, FIRST_PAYMENT
                 if (
                     distributionMode === DistributionMode.FIRST_PAYMENT &&
-                    loan.paymentMethod === PaymentMethod.EQUAL_PRINCIPAL &&
+                    !isAnnuity &&
                     !firstPaymentAfterOdGraceHandled
                 ) {
                     const hadOdGraceBefore = loan.gracePeriods.some(g =>
@@ -138,6 +186,7 @@ export default class ScheduleEngine {
                     }
                 }
 
+                // Распределение отложенных процентов
                 if (deferredInterest > 0) {
                     if (distributionMode === DistributionMode.FIRST_PAYMENT) {
                         interest = Money.add(interest, deferredInterest);
@@ -150,11 +199,27 @@ export default class ScheduleEngine {
                         deferredInterest = Money.subtract(deferredInterest, share);
                     }
                 }
+
+                // Аннуитет + FIRST_PAYMENT: накопленный ОД добавляем в первый платёж
+                if (
+                    isAnnuity &&
+                    distributionMode === DistributionMode.FIRST_PAYMENT &&
+                    !annuityRecalculated
+                ) {
+                    const hadOdGraceBefore = loan.gracePeriods.some(g =>
+                        g.odGrace && g.endPeriod < period
+                    );
+                    if (hadOdGraceBefore) {
+                        // Пересчёт не нужен — просто добавляем накопленный ОД к principal
+                        // (уже рассчитан выше как annuityBasePayment - interest)
+                        annuityRecalculated = true;
+                    }
+                }
             }
 
-            if (principal > openingBalance) {
-                principal = openingBalance;
-            }
+            // Финальная защита
+            if (principal < 0) principal = 0;
+            if (principal > openingBalance) principal = openingBalance;
 
             let closingBalance = Money.round(openingBalance - principal);
 
@@ -180,7 +245,7 @@ export default class ScheduleEngine {
                     distributionMode,
                     plannedDate,
                     adjustedDate: paymentDate,
-                    afterGraceEqualPrincipal
+                    annuityBasePayment: isAnnuity ? annuityBasePayment : null
                 }
             }));
 
@@ -190,17 +255,6 @@ export default class ScheduleEngine {
 
         return new Schedule(rows);
     }
-}
-
-function calculateAnnuityPrincipal(openingBalance, annualRate, remainingPeriods) {
-    const payment = PaymentCalculator.calculateAnnuity(
-        openingBalance,
-        annualRate,
-        remainingPeriods
-    );
-    const monthlyRate = annualRate / 100 / 12;
-    const interestPart = Money.round(openingBalance * monthlyRate);
-    return Money.round(payment - interestPart);
 }
 
 function calculateSkippedPrincipalUntil(loan, untilPeriod) {
