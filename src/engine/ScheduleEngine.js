@@ -39,13 +39,13 @@ export default class ScheduleEngine {
         let afterGraceEqualPrincipal = null;
         let firstPaymentAfterOdGraceHandled = false;
 
-        // Для аннуитета считаем базовый платёж один раз от полного срока
-        // Если будет льгота по ОД — пересчитаем хвост после льготы
+        // Для аннуитета: базовый платёж считается ОДИН РАЗ от полного срока
+        // Проценты в каждой строке: balance * rate/12 (условный месяц — как в Colvir)
         let annuityBasePayment = isAnnuity
             ? PaymentCalculator.calculateAnnuity(loan.principal, loan.annualRate, totalPeriods)
             : 0;
 
-        // Флаг: нужно ли пересчитать аннуитетный платёж после льготного периода
+        // Флаг пересчёта аннуитетного платежа после льготы по ОД (ALL_NEXT_PAYMENTS)
         let annuityRecalculated = false;
 
         for (let period = 1; period <= totalPeriods; period++) {
@@ -71,18 +71,32 @@ export default class ScheduleEngine {
             const remainingPeriods = totalPeriods - period + 1;
             let rowType = RowType.NORMAL;
 
-            // Проценты всегда по Act/360 — для обоих методов
-            let interest = Money.round(
-                InterestCalculator.calculate(openingBalance, loan.annualRate, days)
-            );
+            // ─────────────────────────────────────────────────────────────
+            // ПРОЦЕНТЫ:
+            //   Аннуитет  → условный месяц (rate/12), как в Colvir
+            //   Равные доли → Act/360 (фактические дни)
+            // ─────────────────────────────────────────────────────────────
+            let interest;
+            if (isAnnuity) {
+                interest = Money.round(openingBalance * loan.annualRate / 100 / 12);
+            } else {
+                interest = Money.round(
+                    InterestCalculator.calculate(openingBalance, loan.annualRate, days)
+                );
+            }
 
             let principal;
 
             if (isAnnuity) {
-                // --- АННУИТЕТ ---
-                if (!grace) {
-                    // Пересчитываем базовый платёж один раз — в первый период
-                    // после льготного периода по ОД (если был)
+                // ─── АННУИТЕТ ─────────────────────────────────────────
+                if (period === totalPeriods) {
+                    // Последний период: закрываем остаток полностью
+                    principal = openingBalance;
+                } else if (grace && grace.odGrace) {
+                    // Льготный период по ОД — тело не погашаем
+                    principal = 0;
+                } else {
+                    // Пересчёт базового платежа после льготы (ALL_NEXT_PAYMENTS)
                     if (
                         !annuityRecalculated &&
                         distributionMode === DistributionMode.ALL_NEXT_PAYMENTS
@@ -99,28 +113,15 @@ export default class ScheduleEngine {
                             annuityRecalculated = true;
                         }
                     }
-                }
 
-                if (period === totalPeriods) {
-                    // Последний период: закрываем остаток полностью
-                    principal = openingBalance;
-                } else if (!grace || !grace.odGrace) {
-                    // Обычный период или льгота только по процентам
-                    // principal = annuityPayment - interest
-                    // Но interest здесь Act/360 — значит principal может чуть гулять
+                    // principal = annuityPayment - interest (оба считались по rate/12)
                     principal = Money.round(annuityBasePayment - interest);
-
-                    // Защита от отрицательного principal
                     if (principal < 0) principal = 0;
-                    // Защита от превышения остатка
                     if (principal > openingBalance) principal = openingBalance;
-                } else {
-                    // Льготный период по ОД — тело не гасим
-                    principal = 0;
                 }
 
             } else {
-                // --- РАВНЫЕ ДОЛИ ---
+                // ─── РАВНЫЕ ДОЛИ ──────────────────────────────────────
                 if (afterGraceEqualPrincipal !== null) {
                     principal = period === totalPeriods
                         ? openingBalance
@@ -132,7 +133,9 @@ export default class ScheduleEngine {
                 }
             }
 
-            // --- Обработка льготных периодов ---
+            // ─────────────────────────────────────────────────────────────
+            // ЛЬГОТНЫЕ ПЕРИОДЫ
+            // ─────────────────────────────────────────────────────────────
             if (grace) {
                 rowType = RowType.GRACE;
 
@@ -146,7 +149,7 @@ export default class ScheduleEngine {
                 }
 
             } else {
-                // Первый платёж после льготы — равные доли, ALL_NEXT_PAYMENTS
+                // Первый платёж после льготы по ОД — равные доли, ALL_NEXT_PAYMENTS
                 if (
                     distributionMode === DistributionMode.ALL_NEXT_PAYMENTS &&
                     !isAnnuity &&
@@ -167,7 +170,7 @@ export default class ScheduleEngine {
                     }
                 }
 
-                // Первый платёж после льготы — равные доли, FIRST_PAYMENT
+                // Первый платёж после льготы по ОД — равные доли, FIRST_PAYMENT
                 if (
                     distributionMode === DistributionMode.FIRST_PAYMENT &&
                     !isAnnuity &&
@@ -200,7 +203,7 @@ export default class ScheduleEngine {
                     }
                 }
 
-                // Аннуитет + FIRST_PAYMENT: накопленный ОД добавляем в первый платёж
+                // Аннуитет + FIRST_PAYMENT после льготы: отмечаем что уже обработали
                 if (
                     isAnnuity &&
                     distributionMode === DistributionMode.FIRST_PAYMENT &&
@@ -210,14 +213,12 @@ export default class ScheduleEngine {
                         g.odGrace && g.endPeriod < period
                     );
                     if (hadOdGraceBefore) {
-                        // Пересчёт не нужен — просто добавляем накопленный ОД к principal
-                        // (уже рассчитан выше как annuityBasePayment - interest)
                         annuityRecalculated = true;
                     }
                 }
             }
 
-            // Финальная защита
+            // Финальные защиты
             if (principal < 0) principal = 0;
             if (principal > openingBalance) principal = openingBalance;
 
