@@ -26,11 +26,15 @@
         th, td { border: 1px solid #e3e7eb; padding: 7px 8px; text-align: right; white-space: nowrap; }
         th { background: #f7f9fb; text-align: center; }
         td.left, th.left { text-align: left; }
+        tr.grace-row td { background: #fff8e1; }
         .table-wrap { overflow-x: auto; }
-        .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+        .summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
         .summary-item { background: #f8fafc; border: 1px solid #e6ebf0; border-radius: 8px; padding: 12px; }
         .summary-item .label { font-size: 12px; color: #667085; }
         .summary-item .value { margin-top: 4px; font-size: 18px; font-weight: 700; }
+        .summary-item.gesv { border-color: #1976d2; background: #e8f4ff; }
+        .summary-item.gesv .label { color: #1565c0; }
+        .summary-item.gesv .value { color: #1565c0; }
 
         .mode-tabs { display: flex; gap: 8px; margin: 8px 0 12px; }
         .mode-tabs button { margin-top: 0; flex: 1; }
@@ -79,26 +83,18 @@
             color: #667085;
             margin-top: 6px;
         }
-        .debug-box {
-            font-size: 12px;
-            color: #334155;
-            background: #f8fafc;
-            border: 1px dashed #cbd5e1;
-            padding: 10px;
-            border-radius: 8px;
-            white-space: pre-wrap;
-            margin-top: 12px;
-        }
         @media (max-width: 1100px) {
             .grid { grid-template-columns: 1fr; }
+            .summary { grid-template-columns: repeat(2, 1fr); }
         }
     </style>
 </head>
 <body>
 <div class="app">
-    <h1>Colvir Schedule & APR Calculator (KZ)</h1>
+    <h1>Colvir Schedule &amp; APR Calculator (KZ)</h1>
 
     <div class="grid">
+        <!-- ═══════════════════════════════ ЛЕВАЯ ПАНЕЛЬ ═══════════════════════════════ -->
         <div class="card">
             <div class="section-title">Параметры займа</div>
 
@@ -123,7 +119,7 @@
             <label>Метод погашения</label>
             <select id="paymentMethod">
                 <option value="EQUAL_PRINCIPAL">Равные части ОД</option>
-                <option value="ANNUITY">Аннуитет</option>
+                <option value="ANNUITY" selected>Аннуитет</option>
             </select>
 
             <div style="margin-top:16px;" class="section-title">Льготные периоды</div>
@@ -171,7 +167,6 @@
                     <button id="fillManualBtn" type="button">Заполнить периодами</button>
                     <button id="clearManualBtn" class="secondary" type="button">Очистить</button>
                 </div>
-
                 <div class="months-head">
                     <div>Период</div>
                     <div>Дата</div>
@@ -179,14 +174,14 @@
                     <div>%</div>
                 </div>
                 <div id="manualRows"></div>
-                <div class="small-note">Отметь нужные месяцы вручную. Эти строки пойдут в расчёт как льготные периоды.</div>
+                <div class="small-note">Отметь нужные месяцы вручную.</div>
             </div>
 
             <button id="calcBtn">Рассчитать график</button>
             <div id="errorBox" class="error"></div>
-            <div id="debugBox" class="debug-box"></div>
         </div>
 
+        <!-- ═══════════════════════════════ ПРАВАЯ ПАНЕЛЬ ═══════════════════════════════ -->
         <div class="card">
             <div class="section-title">График платежей</div>
             <div class="table-wrap">
@@ -194,13 +189,12 @@
                     <thead>
                     <tr>
                         <th>#</th>
-                        <th>Дата</th>
-                        <th>Дней</th>
-                        <th>ОД (начало)</th>
-                        <th>Principal</th>
-                        <th>Interest</th>
-                        <th>Payment</th>
-                        <th>ОД (конец)</th>
+                        <th>Дата платежа</th>
+                        <th>Сумма платежа</th>
+                        <th>Вознаграждение</th>
+                        <th>Основной долг</th>
+                        <th>Остаток ОД</th>
+                        <th>Кол-во дней</th>
                         <th>Тип</th>
                     </tr>
                     </thead>
@@ -214,99 +208,77 @@
 </div>
 
 <script type="module">
-/* v=2 — cache-bust: forces browser to re-fetch all modules */
-import Loan from "./src/models/Loan.js?v=2";
-import GracePeriod from "./src/models/GracePeriod.js?v=2";
-import ScheduleEngine from "./src/engine/ScheduleEngine.js?v=2";
-import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js?v=2";
+/* v=3 */
+import Loan         from "./src/models/Loan.js?v=3";
+import GracePeriod  from "./src/models/GracePeriod.js?v=3";
+import LoanCalculator from "./src/services/LoanCalculator.js?v=3";
+import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js?v=3";
 
 const els = {
-    principal: document.getElementById("principal"),
-    annualRate: document.getElementById("annualRate"),
-    term: document.getElementById("term"),
-    issueDate: document.getElementById("issueDate"),
-    firstPaymentDate: document.getElementById("firstPaymentDate"),
-    lastPaymentDate: document.getElementById("lastPaymentDate"),
-    paymentMethod: document.getElementById("paymentMethod"),
-    distributionMode: document.getElementById("distributionMode"),
+    principal:         document.getElementById("principal"),
+    annualRate:        document.getElementById("annualRate"),
+    term:              document.getElementById("term"),
+    issueDate:         document.getElementById("issueDate"),
+    firstPaymentDate:  document.getElementById("firstPaymentDate"),
+    lastPaymentDate:   document.getElementById("lastPaymentDate"),
+    paymentMethod:     document.getElementById("paymentMethod"),
+    distributionMode:  document.getElementById("distributionMode"),
 
-    modeSimpleBtn: document.getElementById("modeSimpleBtn"),
-    modeManualBtn: document.getElementById("modeManualBtn"),
-    simplePanel: document.getElementById("simplePanel"),
-    manualPanel: document.getElementById("manualPanel"),
+    modeSimpleBtn:  document.getElementById("modeSimpleBtn"),
+    modeManualBtn:  document.getElementById("modeManualBtn"),
+    simplePanel:    document.getElementById("simplePanel"),
+    manualPanel:    document.getElementById("manualPanel"),
 
-    simpleMonths: document.getElementById("simpleMonths"),
-    simpleOd: document.getElementById("simpleOd"),
-    simplePct: document.getElementById("simplePct"),
+    simpleMonths:   document.getElementById("simpleMonths"),
+    simpleOd:       document.getElementById("simpleOd"),
+    simplePct:      document.getElementById("simplePct"),
     applySimpleBtn: document.getElementById("applySimpleBtn"),
     clearSimpleBtn: document.getElementById("clearSimpleBtn"),
 
-    fillManualBtn: document.getElementById("fillManualBtn"),
+    fillManualBtn:  document.getElementById("fillManualBtn"),
     clearManualBtn: document.getElementById("clearManualBtn"),
-    manualRows: document.getElementById("manualRows"),
+    manualRows:     document.getElementById("manualRows"),
 
-    calcBtn: document.getElementById("calcBtn"),
-    errorBox: document.getElementById("errorBox"),
-    debugBox: document.getElementById("debugBox"),
-    scheduleBody: document.querySelector("#scheduleTable tbody"),
-    summary: document.getElementById("summary")
+    calcBtn:        document.getElementById("calcBtn"),
+    errorBox:       document.getElementById("errorBox"),
+    scheduleBody:   document.querySelector("#scheduleTable tbody"),
+    summary:        document.getElementById("summary")
 };
 
 let currentMode = "simple";
 
-function debug(msg) {
-    els.debugBox.textContent += msg + "\n";
-    console.log(msg);
-}
-
-function clearDebug() {
-    els.debugBox.textContent = "";
-}
-
-function num(v) {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-}
-
-function fmt(v) {
-    return Number(v || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 });
-}
-
-function formatDate(d) {
+function num(v)         { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+function fmt(v)         { return Number(v || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 }); }
+function fmtPct(v)      { return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " %"; }
+function formatDate(d)  {
     const dt = new Date(d);
-    return `${String(dt.getDate()).padStart(2, "0")}.${String(dt.getMonth() + 1).padStart(2, "0")}.${dt.getFullYear()}`;
+    return `${String(dt.getDate()).padStart(2,"0")}.${String(dt.getMonth()+1).padStart(2,"0")}.${dt.getFullYear()}`;
 }
-
 function addMonthsSafe(dateValue, monthsToAdd) {
-    const d = new Date(dateValue);
-    const day = d.getDate();
+    const d = new Date(dateValue), day = d.getDate();
     d.setMonth(d.getMonth() + monthsToAdd);
-    if (d.getDate() < day) {
-        d.setDate(0);
-    }
+    if (d.getDate() < day) d.setDate(0);
     return d;
 }
 
 function setMode(mode) {
     currentMode = mode;
     els.modeSimpleBtn.classList.toggle("active", mode === "simple");
-    els.modeManualBtn.classList.toggle("active", mode === "manual");
-    els.simplePanel.classList.toggle("active", mode === "simple");
-    els.manualPanel.classList.toggle("active", mode === "manual");
+    els.modeManualBtn.classList.toggle("active",  mode === "manual");
+    els.simplePanel.classList.toggle("active",    mode === "simple");
+    els.manualPanel.classList.toggle("active",    mode === "manual");
 }
 
-function clearManualRows() {
-    els.manualRows.innerHTML = "";
-}
+function clearManualRows() { els.manualRows.innerHTML = ""; }
 
-function createMonthRow(period, paymentDate, odChecked = false, pctChecked = false) {
+function createMonthRow(period, paymentDate, odChecked=false, pctChecked=false) {
     const row = document.createElement("div");
     row.className = "month-row";
     row.dataset.period = String(period);
     row.innerHTML = `
         <div class="period">${period}</div>
         <div class="date">${formatDate(paymentDate)}</div>
-        <div class="check-wrap"><input type="checkbox" class="m-od" ${odChecked ? "checked" : ""}></div>
+        <div class="check-wrap"><input type="checkbox" class="m-od"  ${odChecked  ? "checked" : ""}></div>
         <div class="check-wrap"><input type="checkbox" class="m-pct" ${pctChecked ? "checked" : ""}></div>
     `;
     return row;
@@ -314,195 +286,142 @@ function createMonthRow(period, paymentDate, odChecked = false, pctChecked = fal
 
 function buildManualRows() {
     clearManualRows();
-    const term = parseInt(els.term.value, 10) || 0;
+    const term     = parseInt(els.term.value, 10) || 0;
     const calendar = new KazakhstanBusinessCalendar();
-
-    for (let period = 1; period <= term; period++) {
-        const planned = addMonthsSafe(els.firstPaymentDate.value, period - 1);
+    for (let p = 1; p <= term; p++) {
+        const planned     = addMonthsSafe(els.firstPaymentDate.value, p - 1);
         const paymentDate = calendar.adjustPaymentDate(planned);
-        els.manualRows.appendChild(createMonthRow(period, paymentDate, false, false));
+        els.manualRows.appendChild(createMonthRow(p, paymentDate, false, false));
     }
 }
 
 function applySimpleGrace() {
     clearManualRows();
-
-    const months = Math.max(1, parseInt(els.simpleMonths.value, 10) || 1);
-    const term = parseInt(els.term.value, 10) || 0;
-    const maxMonths = Math.min(months, term);
+    const months   = Math.max(1, parseInt(els.simpleMonths.value, 10) || 1);
+    const term     = parseInt(els.term.value, 10) || 0;
     const calendar = new KazakhstanBusinessCalendar();
-
-    for (let period = 1; period <= maxMonths; period++) {
-        const planned = addMonthsSafe(els.firstPaymentDate.value, period - 1);
+    for (let p = 1; p <= Math.min(months, term); p++) {
+        const planned     = addMonthsSafe(els.firstPaymentDate.value, p - 1);
         const paymentDate = calendar.adjustPaymentDate(planned);
-
         els.manualRows.appendChild(
-            createMonthRow(
-                period,
-                paymentDate,
-                els.simpleOd.checked,
-                els.simplePct.checked
-            )
+            createMonthRow(p, paymentDate, els.simpleOd.checked, els.simplePct.checked)
         );
     }
-
     setMode("manual");
 }
 
 function readGracePeriods() {
     const rows = [...els.manualRows.querySelectorAll(".month-row")];
     const periods = [];
-
     for (const row of rows) {
         const period = Number(row.dataset.period);
-        const od = row.querySelector(".m-od").checked;
+        const od  = row.querySelector(".m-od").checked;
         const pct = row.querySelector(".m-pct").checked;
-
         if (od || pct) {
             periods.push(new GracePeriod({
-                startPeriod: period,
-                endPeriod: period,
-                odGrace: od,
-                percentGrace: pct
+                startPeriod: period, endPeriod: period,
+                odGrace: od, percentGrace: pct
             }));
         }
     }
-
     return periods;
 }
 
-function renderSchedule(schedule) {
+// ─── Рендер таблицы ────────────────────────────────────────────────────────
+function renderSchedule(result) {
+    const { schedule, apr } = result;
     els.scheduleBody.innerHTML = "";
 
     schedule.rows.forEach((row, idx) => {
+        const isIssue = row.metadata && row.metadata.kind === "ISSUE";
+        const isGrace = row.rowType === "GRACE";
+
         const tr = document.createElement("tr");
+        if (isGrace) tr.classList.add("grace-row");
+
         tr.innerHTML = `
             <td class="left">${idx}</td>
             <td class="left">${formatDate(row.paymentDate)}</td>
-            <td>${fmt(row.days)}</td>
-            <td>${fmt(row.openingBalance)}</td>
-            <td>${fmt(row.principal)}</td>
-            <td>${fmt(row.interest)}</td>
-            <td>${fmt(row.payment)}</td>
+            <td>${isIssue ? "—" : fmt(row.payment)}</td>
+            <td>${isIssue ? "—" : fmt(row.interest)}</td>
+            <td>${isIssue ? "—" : fmt(row.principal)}</td>
             <td>${fmt(row.closingBalance)}</td>
+            <td>${row.days}</td>
             <td class="left">${row.rowType || ""}</td>
         `;
         els.scheduleBody.appendChild(tr);
     });
 
+    // ─── Итоги + ГЭСВ ───────────────────────────────────────────────────────
     els.summary.innerHTML = "";
 
     const items = [
-        ["Общий ОД", schedule.totalPrincipal()],
-        ["Общие проценты", schedule.totalInterest()],
-        ["Общая сумма", schedule.totalPayment()],
-        ["Строк графика", schedule.length]
+        { label: "Общий ОД",         value: fmt(schedule.totalPrincipal()),  gesv: false },
+        { label: "Общие проценты",   value: fmt(schedule.totalInterest()),   gesv: false },
+        { label: "Общая сумма",      value: fmt(schedule.totalPayment()),    gesv: false },
+        { label: "Строк графика",    value: schedule.length,                 gesv: false },
+        { label: "ГЭСВ (годовых)",   value: fmtPct(apr ? apr.annualPercentRate : null), gesv: true }
     ];
 
-    for (const [label, value] of items) {
+    for (const item of items) {
         const el = document.createElement("div");
-        el.className = "summary-item";
-        el.innerHTML = `<div class="label">${label}</div><div class="value">${fmt(value)}</div>`;
+        el.className = "summary-item" + (item.gesv ? " gesv" : "");
+        el.innerHTML = `<div class="label">${item.label}</div><div class="value">${item.value}</div>`;
         els.summary.appendChild(el);
     }
 }
 
+// ─── События ────────────────────────────────────────────────────────────────
 els.modeSimpleBtn.addEventListener("click", () => setMode("simple"));
-
 els.modeManualBtn.addEventListener("click", () => {
     setMode("manual");
-    if (!els.manualRows.children.length) {
-        buildManualRows();
-    }
+    if (!els.manualRows.children.length) buildManualRows();
 });
-
-els.applySimpleBtn.addEventListener("click", () => {
-    applySimpleGrace();
-});
-
+els.applySimpleBtn.addEventListener("click", applySimpleGrace);
 els.clearSimpleBtn.addEventListener("click", () => {
     els.simpleMonths.value = 3;
     els.simpleOd.checked = true;
     els.simplePct.checked = false;
 });
-
-els.fillManualBtn.addEventListener("click", () => {
-    buildManualRows();
-});
-
-els.clearManualBtn.addEventListener("click", () => {
-    clearManualRows();
-});
-
-els.term.addEventListener("change", () => {
-    if (currentMode === "manual") {
-        buildManualRows();
-    }
-});
-
+els.fillManualBtn.addEventListener("click", buildManualRows);
+els.clearManualBtn.addEventListener("click", clearManualRows);
+els.term.addEventListener("change", () => { if (currentMode==="manual") buildManualRows(); });
 els.firstPaymentDate.addEventListener("change", () => {
-    if (currentMode === "manual" && els.manualRows.children.length) {
-        buildManualRows();
-    }
+    if (currentMode==="manual" && els.manualRows.children.length) buildManualRows();
 });
 
 els.calcBtn.addEventListener("click", () => {
-    els.errorBox.textContent = "";
+    els.errorBox.textContent  = "";
     els.scheduleBody.innerHTML = "";
-    els.summary.innerHTML = "";
-    clearDebug();
+    els.summary.innerHTML     = "";
 
     try {
         if (!els.manualRows.children.length) {
-            if (currentMode === "simple") {
-                applySimpleGrace();
-            } else {
-                buildManualRows();
-            }
+            currentMode === "simple" ? applySimpleGrace() : buildManualRows();
         }
 
         const gracePeriods = readGracePeriods();
 
-        debug("DISTRIBUTION MODE:");
-        debug(els.distributionMode.value);
-        debug("GRACE PERIODS:");
-        debug(JSON.stringify(gracePeriods, null, 2));
-
         const loan = new Loan({
-            principal: num(els.principal.value),
-            annualRate: num(els.annualRate.value),
-            term: parseInt(els.term.value, 10),
-            issueDate: new Date(els.issueDate.value),
+            principal:        num(els.principal.value),
+            annualRate:       num(els.annualRate.value),
+            term:             parseInt(els.term.value, 10),
+            issueDate:        new Date(els.issueDate.value),
             firstPaymentDate: new Date(els.firstPaymentDate.value),
-            lastPaymentDate: els.lastPaymentDate.value ? new Date(els.lastPaymentDate.value) : null,
-            paymentMethod: els.paymentMethod.value,
+            lastPaymentDate:  els.lastPaymentDate.value ? new Date(els.lastPaymentDate.value) : null,
+            paymentMethod:    els.paymentMethod.value,
             distributionMode: els.distributionMode.value,
             gracePeriods
         });
 
-        debug("LOAN CREATED");
-        debug(JSON.stringify({
-            principal: loan.principal,
-            annualRate: loan.annualRate,
-            term: loan.term,
-            paymentMethod: loan.paymentMethod,
-            distributionMode: loan.distributionMode,
-            gracePeriods: loan.gracePeriods
-        }, null, 2));
+        const calculator = new LoanCalculator(new KazakhstanBusinessCalendar());
+        const result     = calculator.calculate(loan);
 
-        const engine = new ScheduleEngine(new KazakhstanBusinessCalendar());
-        const schedule = engine.generate(loan);
+        renderSchedule(result);
 
-        renderSchedule(schedule);
-
-        debug("SCHEDULE CREATED");
-        debug(`ROWS: ${schedule.rows.length}`);
-        debug("RENDER OK");
     } catch (e) {
         console.error(e);
         els.errorBox.textContent = e.stack || e.message || String(e);
-        debug("ERROR:");
-        debug(e.stack || e.message || String(e));
     }
 });
 
