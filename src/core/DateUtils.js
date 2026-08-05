@@ -60,9 +60,10 @@ export default class DateUtils {
     }
 
     /**
-     * Количество календарных дней между датами.
+     * Количество календарных дней между датами (Act/Act).
      *
-     * Вторая дата не включается.
+     * Используется для отображения колонки "Дней" в графике
+     * и для расчёта процентов по равным долям.
      */
     static daysBetween(startDate, endDate) {
 
@@ -85,6 +86,38 @@ export default class DateUtils {
             (end.getTime() - start.getTime()) / millisecondsPerDay
 
         );
+
+    }
+
+    /**
+     * Количество дней по конвенции 30/360 (European 30/360, ISDA).
+     *
+     * Используется для расчёта процентов и PMT аннуитета — совпадает
+     * с методологией Colvir.
+     *
+     * Правило:
+     *   d1 = min(startDate.day, 30)
+     *   d2 = если d1 >= 30, то min(endDate.day, 30), иначе endDate.day
+     *   days = 360*(Y2-Y1) + 30*(M2-M1) + (d2-d1)
+     *
+     * @param {Date} startDate
+     * @param {Date} endDate
+     * @returns {number}
+     */
+    static days30_360(startDate, endDate) {
+
+        const y1 = startDate.getFullYear();
+        const m1 = startDate.getMonth() + 1;
+        const day1 = startDate.getDate();
+
+        const y2 = endDate.getFullYear();
+        const m2 = endDate.getMonth() + 1;
+        const day2Raw = endDate.getDate();
+
+        const d1 = Math.min(day1, 30);
+        const d2 = d1 >= 30 ? Math.min(day2Raw, 30) : day2Raw;
+
+        return 360 * (y2 - y1) + 30 * (m2 - m1) + (d2 - d1);
 
     }
 

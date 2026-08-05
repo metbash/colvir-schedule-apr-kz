@@ -39,16 +39,25 @@ export default class ScheduleEngine {
         let afterGraceEqualPrincipal = null;
         let firstPaymentAfterOdGraceHandled = false;
 
-        // Для аннуитета: базовый платёж считается ОДИН РАЗ и больше НЕ МЕНЯЕТСЯ
-        // payment = annuityBasePayment = константа во всех периодах кроме последнего
-        // Проценты аннуитета: Act/360 по (days - 1) — конвенция Colvir (день начала периода не включается)
-        // Проценты равных долей: Act/360 по фактическим days — без изменений
-        let annuityBasePayment = isAnnuity
-            ? PaymentCalculator.calculateAnnuity(loan.principal, loan.annualRate, totalPeriods)
-            : 0;
-
-        // Флаг пересчёта аннуитетного платежа после льготы по ОД (ALL_NEXT_PAYMENTS)
+        // ─────────────────────────────────────────────────────────────
+        // АННУИТЕТ: PMT рассчитывается ОДИН РАЗ по конвенции 30/360
+        // Для этого заранее строим массив дат всех платежей.
+        //
+        // Проценты аннуитета: balance * annualRate/360 * days30_360
+        // Проценты равных долей: balance * annualRate/360 * actDays (без изменений)
+        // ─────────────────────────────────────────────────────────────
+        let annuityBasePayment = 0;
         let annuityRecalculated = false;
+
+        if (isAnnuity) {
+            const paymentDates = _buildPaymentDates(loan, this.calendar, totalPeriods);
+            annuityBasePayment = PaymentCalculator.calculateAnnuity(
+                loan.principal,
+                loan.annualRate,
+                totalPeriods,
+                paymentDates
+            );
+        }
 
         for (let period = 1; period <= totalPeriods; period++) {
             let plannedDate;
@@ -63,7 +72,12 @@ export default class ScheduleEngine {
                 ? this.calendar.adjustPaymentDate(plannedDate)
                 : plannedDate;
 
-            const days = PeriodCalculator.calculate(prevDate, paymentDate).days;
+            // actDays — для отображения колонки "Дней" и процентов равных долей
+            const actDays = PeriodCalculator.calculate(prevDate, paymentDate).days;
+
+            // days30_360 — для процентов аннуитета (конвенция Colvir)
+            const annuityDays = DateUtils.days30_360(prevDate, paymentDate);
+
             const openingBalance = Money.round(balance);
 
             const grace = loan.gracePeriods.find(g =>
@@ -73,12 +87,12 @@ export default class ScheduleEngine {
             const remainingPeriods = totalPeriods - period + 1;
             let rowType = RowType.NORMAL;
 
-            // ────────────────────────────────────────────────────────────
+            // ─────────────────────────────────────────────────────────
             // ПРОЦЕНТЫ
-            // Аннуитет:      Act/360 по (days - 1) — конвенция Colvir
-            // Равные доли:   Act/360 по days        — без изменений
-            // ────────────────────────────────────────────────────────────
-            const interestDays = isAnnuity ? days - 1 : days;
+            // Аннуитет:     Act/360 с 30/360 днями  (конвенция Colvir)
+            // Равные доли:  Act/360 с фактическими днями (без изменений)
+            // ─────────────────────────────────────────────────────────
+            const interestDays = isAnnuity ? annuityDays : actDays;
             let interest = Money.round(
                 InterestCalculator.calculate(openingBalance, loan.annualRate, interestDays)
             );
@@ -86,12 +100,10 @@ export default class ScheduleEngine {
             let principal;
 
             if (isAnnuity) {
-                // ─── АННУИТЕТ ─────────────────────────────────────────
+                // ─── АННУИТЕТ ──────────────────────────────────────────
                 if (period === totalPeriods) {
-                    // Последний период: закрываем остаток полностью
                     principal = openingBalance;
                 } else if (grace && grace.odGrace) {
-                    // Льготный период по ОД — тело не погашаем
                     principal = 0;
                 } else {
                     // Пересчёт annuityBasePayment после льготы по ОД (ALL_NEXT_PAYMENTS)
@@ -103,24 +115,27 @@ export default class ScheduleEngine {
                             g.odGrace && g.endPeriod < period
                         );
                         if (hadOdGraceBefore) {
+                            // Пересчёт: строим оставшиеся даты
+                            const remainingDates = _buildPaymentDates(
+                                loan, this.calendar, totalPeriods, period - 1
+                            );
                             annuityBasePayment = PaymentCalculator.calculateAnnuity(
                                 openingBalance,
                                 loan.annualRate,
-                                remainingPeriods
+                                remainingPeriods,
+                                remainingDates
                             );
                             annuityRecalculated = true;
                         }
                     }
 
-                    // payment = annuityBasePayment (константа)
-                    // principal = payment - interest (немного гуляет из-за Act/360)
                     principal = Money.round(annuityBasePayment - interest);
                     if (principal < 0) principal = 0;
                     if (principal > openingBalance) principal = openingBalance;
                 }
 
             } else {
-                // ─── РАВНЫЕ ДОЛИ — без изменений ────────────────
+                // ─── РАВНЫЕ ДОЛИ — без изменений ───────────────────────
                 if (afterGraceEqualPrincipal !== null) {
                     principal = period === totalPeriods
                         ? openingBalance
@@ -132,9 +147,9 @@ export default class ScheduleEngine {
                 }
             }
 
-            // ────────────────────────────────────────────────────────────
+            // ─────────────────────────────────────────────────────────
             // ЛЬГОТНЫЕ ПЕРИОДЫ
-            // ────────────────────────────────────────────────────────────
+            // ─────────────────────────────────────────────────────────
             if (grace) {
                 rowType = RowType.GRACE;
 
@@ -233,7 +248,7 @@ export default class ScheduleEngine {
             rows.push(new PaymentRow({
                 period,
                 paymentDate,
-                days,
+                days: actDays,       // отображаем фактические дни (Act/Act)
                 openingBalance,
                 principal: Money.round(principal),
                 interest: Money.round(interest),
@@ -245,7 +260,8 @@ export default class ScheduleEngine {
                     distributionMode,
                     plannedDate,
                     adjustedDate: paymentDate,
-                    annuityBasePayment: isAnnuity ? annuityBasePayment : null
+                    annuityBasePayment: isAnnuity ? annuityBasePayment : null,
+                    annuityDays30_360: isAnnuity ? annuityDays : null
                 }
             }));
 
@@ -255,6 +271,47 @@ export default class ScheduleEngine {
 
         return new Schedule(rows);
     }
+}
+
+/**
+ * Строит массив дат [fromDate, pay_1, ..., pay_n] для PMT расчёта.
+ *
+ * @param {Object}   loan
+ * @param {Object}   calendar
+ * @param {number}   totalPeriods
+ * @param {number}   [startFrom=0]  — начать с этого периода (для пересчёта после льготы)
+ * @returns {Date[]}
+ */
+function _buildPaymentDates(loan, calendar, totalPeriods, startFrom = 0) {
+
+    const dates = [];
+
+    // Начальная дата диапазона
+    if (startFrom === 0) {
+        dates.push(DateUtils.clone(loan.issueDate));
+    } else {
+        // Дата предыдущего платежа (после льготы)
+        const prevPlanned = DateUtils.addMonths(loan.firstPaymentDate, startFrom - 1);
+        const prevDate = calendar
+            ? calendar.adjustPaymentDate(prevPlanned)
+            : prevPlanned;
+        dates.push(prevDate);
+    }
+
+    for (let p = startFrom + 1; p <= totalPeriods; p++) {
+        let planned;
+        if (p === totalPeriods && loan.lastPaymentDate) {
+            planned = DateUtils.clone(loan.lastPaymentDate);
+        } else {
+            planned = DateUtils.addMonths(loan.firstPaymentDate, p - 1);
+        }
+        const adjusted = calendar
+            ? calendar.adjustPaymentDate(planned)
+            : planned;
+        dates.push(adjusted);
+    }
+
+    return dates;
 }
 
 function calculateSkippedPrincipalUntil(loan, untilPeriod) {

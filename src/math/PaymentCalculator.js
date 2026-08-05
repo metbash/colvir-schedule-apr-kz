@@ -10,45 +10,84 @@
  */
 
 import Money from "../core/Money.js";
+import DateUtils from "../core/DateUtils.js";
 
 export default class PaymentCalculator {
 
     /**
      * Аннуитетный платеж.
      *
-     * @param {number} principal
-     * @param {number} annualRate
-     * @param {number} periods
+     * Методология Colvir: PMT рассчитывается через дисконтирование
+     * по конвенции 30/360 с фактическими датами платежей.
+     *
+     * Каждый платёж дисконтируется по накопленному произведению
+     * периодных ставок: r_i = annualRate/360 * days30_360(prevDate, paymentDate)
+     *
+     * PV = sum( PMT / prod(1 + r_i) ) = principal  => решаем относительно PMT.
+     *
+     * Если даты не переданы — используется стандартная формула rate/12.
+     *
+     * @param {number}   principal
+     * @param {number}   annualRate  — % годовых (21, не 0.21)
+     * @param {number}   periods     — количество периодов
+     * @param {Date[]}   [dates]     — массив дат [issueDate, pay1, pay2, ..., payN]
+     *                                 длина должна быть periods + 1
      * @returns {number}
      */
     static calculateAnnuity(
         principal,
         annualRate,
-        periods
+        periods,
+        dates = null
     ) {
 
         if (annualRate === 0) {
+            return Money.round(principal / periods);
+        }
 
-            return Money.round(
-                principal / periods
+        // С датами: 30/360 дисконтирование (Colvir)
+        if (dates && dates.length === periods + 1) {
+
+            return PaymentCalculator._calculateAnnuityBy30_360(
+                principal,
+                annualRate,
+                dates
             );
 
         }
 
-        const monthlyRate =
-            annualRate / 100 / 12;
+        // Без дат: стандартная формула (fallback)
+        const monthlyRate = annualRate / 100 / 12;
+        const factor = Math.pow(1 + monthlyRate, periods);
+        const payment = principal * monthlyRate * factor / (factor - 1);
+        return Money.round(payment);
 
-        const factor =
-            Math.pow(
-                1 + monthlyRate,
-                periods
-            );
+    }
 
-        const payment =
-            principal *
-            monthlyRate *
-            factor /
-            (factor - 1);
+    /**
+     * PMT через итерацию бисекции с 30/360 дисконтированием.
+     *
+     * @private
+     */
+    static _calculateAnnuityBy30_360(principal, annualRate, dates) {
+
+        const dailyRate = annualRate / 100 / 360;
+
+        // Накопленные факторы дисконтирования для каждого периода
+        const discountFactors = [];
+        let cumFactor = 1.0;
+
+        for (let i = 1; i < dates.length; i++) {
+            const d = DateUtils.days30_360(dates[i - 1], dates[i]);
+            cumFactor *= (1 + dailyRate * d);
+            discountFactors.push(cumFactor);
+        }
+
+        // PV(PMT) = sum(PMT / factor_i)
+        // PV(PMT) = PMT * sum(1 / factor_i) = principal
+        // PMT = principal / sum(1 / factor_i)
+        const sumInvFactors = discountFactors.reduce((s, f) => s + 1 / f, 0);
+        const payment = principal / sumInvFactors;
 
         return Money.round(payment);
 
