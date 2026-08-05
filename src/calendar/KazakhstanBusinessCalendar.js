@@ -16,6 +16,16 @@ function addDays(date, days) {
     return d;
 }
 
+/**
+ * Праздники, которые Colvir НЕ переносит на следующий рабочий день
+ * даже если они выпали на выходной.
+ * Colvir просто учитывает саму дату праздника — платёж в этот день
+ * НЕ сдвигается (перенесённый выходной игнорируется).
+ */
+const NO_OBSERVED_SHIFT_MMDD = new Set([
+    "05-09"   // День Победы — Colvir не учитывает перенос
+]);
+
 export default class KazakhstanBusinessCalendar {
     constructor(options = {}) {
         this.dynamicHolidayOverrides = {
@@ -41,9 +51,9 @@ export default class KazakhstanBusinessCalendar {
             `${year}-03-23`,
             `${year}-05-01`,
             `${year}-05-07`,
-            `${year}-08-30`,
             `${year}-05-09`,
             `${year}-07-06`,
+            `${year}-08-30`,
             `${year}-10-25`,
             `${year}-12-16`
         ];
@@ -66,15 +76,17 @@ export default class KazakhstanBusinessCalendar {
 
         for (const iso of baseDates) {
             const d = new Date(iso + "T00:00:00");
+            const mmdd = iso.slice(5); // "MM-DD"
 
-            if (iso.endsWith("-01-07")) {
-                continue;
-            }
+            // Рождество и динамические праздники не переносим
+            if (iso.endsWith("-01-07")) continue;
 
             const isDynamic = this.getDynamicHolidayDates(year).includes(iso);
-            if (isDynamic) {
-                continue;
-            }
+            if (isDynamic) continue;
+
+            // Праздники из списка NO_OBSERVED_SHIFT тоже не переносим —
+            // Colvir учитывает только саму дату, перенесённый выходной игнорирует
+            if (NO_OBSERVED_SHIFT_MMDD.has(mmdd)) continue;
 
             const day = d.getDay();
             if (day === 6 || day === 0) {
