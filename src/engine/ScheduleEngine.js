@@ -41,10 +41,7 @@ export default class ScheduleEngine {
 
         // ─────────────────────────────────────────────────────────────
         // АННУИТЕТ: PMT рассчитывается ОДИН РАЗ по конвенции 30/360
-        // Для этого заранее строим массив дат всех платежей.
-        //
-        // Проценты аннуитета: balance * annualRate/360 * days30_360
-        // Проценты равных долей: balance * annualRate/360 * actDays (без изменений)
+        // с базисом Colvir (360/1.05).
         // ─────────────────────────────────────────────────────────────
         let annuityBasePayment = 0;
         let annuityRecalculated = false;
@@ -72,10 +69,7 @@ export default class ScheduleEngine {
                 ? this.calendar.adjustPaymentDate(plannedDate)
                 : plannedDate;
 
-            // actDays — для отображения колонки "Дней" и процентов равных долей
             const actDays = PeriodCalculator.calculate(prevDate, paymentDate).days;
-
-            // days30_360 — для процентов аннуитета (конвенция Colvir)
             const annuityDays = DateUtils.days30_360(prevDate, paymentDate);
 
             const openingBalance = Money.round(balance);
@@ -87,11 +81,6 @@ export default class ScheduleEngine {
             const remainingPeriods = totalPeriods - period + 1;
             let rowType = RowType.NORMAL;
 
-            // ─────────────────────────────────────────────────────────
-            // ПРОЦЕНТЫ
-            // Аннуитет:     Act/360 с 30/360 днями  (конвенция Colvir)
-            // Равные доли:  Act/360 с фактическими днями (без изменений)
-            // ─────────────────────────────────────────────────────────
             const interestDays = isAnnuity ? annuityDays : actDays;
             let interest = Money.round(
                 InterestCalculator.calculate(openingBalance, loan.annualRate, interestDays)
@@ -100,13 +89,13 @@ export default class ScheduleEngine {
             let principal;
 
             if (isAnnuity) {
-                // ─── АННУИТЕТ ──────────────────────────────────────────
                 if (period === totalPeriods) {
+                    // Последний период: principal = весь остаток.
+                    // payment = principal + interest (может отличаться от PMT на 1 тиын).
                     principal = openingBalance;
                 } else if (grace && grace.odGrace) {
                     principal = 0;
                 } else {
-                    // Пересчёт annuityBasePayment после льготы по ОД (ALL_NEXT_PAYMENTS)
                     if (
                         !annuityRecalculated &&
                         distributionMode === DistributionMode.ALL_NEXT_PAYMENTS
@@ -115,7 +104,6 @@ export default class ScheduleEngine {
                             g.odGrace && g.endPeriod < period
                         );
                         if (hadOdGraceBefore) {
-                            // Пересчёт: строим оставшиеся даты
                             const remainingDates = _buildPaymentDates(
                                 loan, this.calendar, totalPeriods, period - 1
                             );
@@ -135,7 +123,6 @@ export default class ScheduleEngine {
                 }
 
             } else {
-                // ─── РАВНЫЕ ДОЛИ — без изменений ───────────────────────
                 if (afterGraceEqualPrincipal !== null) {
                     principal = period === totalPeriods
                         ? openingBalance
@@ -147,9 +134,6 @@ export default class ScheduleEngine {
                 }
             }
 
-            // ─────────────────────────────────────────────────────────
-            // ЛЬГОТНЫЕ ПЕРИОДЫ
-            // ─────────────────────────────────────────────────────────
             if (grace) {
                 rowType = RowType.GRACE;
 
@@ -163,7 +147,6 @@ export default class ScheduleEngine {
                 }
 
             } else {
-                // Первый платёж после льготы по ОД — равные доли, ALL_NEXT_PAYMENTS
                 if (
                     distributionMode === DistributionMode.ALL_NEXT_PAYMENTS &&
                     !isAnnuity &&
@@ -184,7 +167,6 @@ export default class ScheduleEngine {
                     }
                 }
 
-                // Первый платёж после льготы по ОД — равные доли, FIRST_PAYMENT
                 if (
                     distributionMode === DistributionMode.FIRST_PAYMENT &&
                     !isAnnuity &&
@@ -203,7 +185,6 @@ export default class ScheduleEngine {
                     }
                 }
 
-                // Распределение отложенных процентов
                 if (deferredInterest > 0) {
                     if (distributionMode === DistributionMode.FIRST_PAYMENT) {
                         interest = Money.add(interest, deferredInterest);
@@ -217,7 +198,6 @@ export default class ScheduleEngine {
                     }
                 }
 
-                // Аннуитет + FIRST_PAYMENT после льготы: отмечаем что уже обработали
                 if (
                     isAnnuity &&
                     distributionMode === DistributionMode.FIRST_PAYMENT &&
@@ -232,7 +212,6 @@ export default class ScheduleEngine {
                 }
             }
 
-            // Финальные защиты
             if (principal < 0) principal = 0;
             if (principal > openingBalance) principal = openingBalance;
 
@@ -248,7 +227,7 @@ export default class ScheduleEngine {
             rows.push(new PaymentRow({
                 period,
                 paymentDate,
-                days: actDays,       // отображаем фактические дни (Act/Act)
+                days: actDays,
                 openingBalance,
                 principal: Money.round(principal),
                 interest: Money.round(interest),
@@ -273,24 +252,13 @@ export default class ScheduleEngine {
     }
 }
 
-/**
- * Строит массив дат [fromDate, pay_1, ..., pay_n] для PMT расчёта.
- *
- * @param {Object}   loan
- * @param {Object}   calendar
- * @param {number}   totalPeriods
- * @param {number}   [startFrom=0]  — начать с этого периода (для пересчёта после льготы)
- * @returns {Date[]}
- */
 function _buildPaymentDates(loan, calendar, totalPeriods, startFrom = 0) {
 
     const dates = [];
 
-    // Начальная дата диапазона
     if (startFrom === 0) {
         dates.push(DateUtils.clone(loan.issueDate));
     } else {
-        // Дата предыдущего платежа (после льготы)
         const prevPlanned = DateUtils.addMonths(loan.firstPaymentDate, startFrom - 1);
         const prevDate = calendar
             ? calendar.adjustPaymentDate(prevPlanned)

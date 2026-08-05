@@ -1,12 +1,24 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
+ * Version: 4.0-dev2
  *
  * APRCalculator.js
  *
- * Первая рабочая версия APR / ГЭСВ калькулятора
- * на базе реальных cash-flow и дат.
+ * ГЭСВ (Годовая Эффективная Ставка Вознаграждения) по
+ * Правилам НБРК (Постановление №87 от 26.03.2018).
+ *
+ * Формула:
+ *   P_net = Σ S_k / (1 + GESV)^(D_k / 365)
+ *
+ * где:
+ *   P_net  — сумма займа за вычетом комиссий в дату выдачи
+ *   S_k    — k-й платёж (основной долг + проценты + комиссии)
+ *   D_k    — количество календарных дней от даты выдачи до k-го платежа
+ *   GESV   — искомая ГЭСВ (decimal, не %)
+ *   basis  — 365 дней (Act/365, фиксировано НБРК)
+ *
+ * Решается методом Ньютона–Рафсона.
  * ==========================================================
  */
 
@@ -18,6 +30,21 @@ import { APR } from "../core/Constants.js";
 
 export default class APRCalculator {
 
+    /**
+     * Рассчитать ГЭСВ.
+     *
+     * @param {CashFlowSet} cashFlowSet  — набор cash-flow:
+     *   положительные = выдача займа (нетто, после вычета комиссий в дату выдачи),
+     *   отрицательные = платежи заёмщика (погашение + проценты + комиссии).
+     *
+     * @param {object} options
+     * @param {number} [options.basisDays=365]   — база (НБРК = 365)
+     * @param {number} [options.guess=0.30]      — начальное приближение
+     * @param {number} [options.tolerance]       — точность
+     * @param {number} [options.maxIterations]   — макс. итераций
+     *
+     * @returns {APRResult}
+     */
     static calculate(
         cashFlowSet,
         options = {}
@@ -42,7 +69,7 @@ export default class APRCalculator {
         }
 
         const basisDays =
-            options.basisDays || 365;
+            options.basisDays || APR.BASIS_DAYS;
 
         Validation.requirePositive(
             "basisDays",
@@ -79,14 +106,14 @@ export default class APRCalculator {
 
             iterations = i + 1;
 
-            const f = this.npv(
+            const f = APRCalculator.npv(
                 flows,
                 rate,
                 baseDate,
                 basisDays
             );
 
-            const df = this.npvDerivative(
+            const df = APRCalculator.npvDerivative(
                 flows,
                 rate,
                 baseDate,
@@ -133,6 +160,13 @@ export default class APRCalculator {
 
     }
 
+    /**
+     * NPV при заданной ставке.
+     *
+     * NPV = Σ flow.amount / (1 + rate)^(days / basisDays)
+     *
+     * При сходимости NPV → 0.
+     */
     static npv(
         flows,
         annualRate,
@@ -162,6 +196,11 @@ export default class APRCalculator {
 
     }
 
+    /**
+     * Производная NPV по ставке (для Newton-Raphson).
+     *
+     * d(NPV)/d(rate) = Σ flow.amount * (-exponent) / (1 + rate)^(exponent + 1)
+     */
     static npvDerivative(
         flows,
         annualRate,
