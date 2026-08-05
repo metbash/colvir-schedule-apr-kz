@@ -11,6 +11,7 @@
 
 import Money from "../core/Money.js";
 import DateUtils from "../core/DateUtils.js";
+import { COLVIR_BASIS } from "./InterestCalculator.js";
 
 export default class PaymentCalculator {
 
@@ -21,7 +22,7 @@ export default class PaymentCalculator {
      * по конвенции 30/360 с фактическими датами платежей.
      *
      * Каждый платёж дисконтируется по накопленному произведению
-     * периодных ставок: r_i = annualRate/360 * days30_360(prevDate, paymentDate)
+     * периодных ставок: r_i = annualRate / COLVIR_BASIS * days30_360(prevDate, paymentDate)
      *
      * PV = sum( PMT / prod(1 + r_i) ) = principal  => решаем относительно PMT.
      *
@@ -45,7 +46,7 @@ export default class PaymentCalculator {
             return Money.round(principal / periods);
         }
 
-        // С датами: 30/360 дисконтирование (Colvir)
+        // С датами: 30/360 дисконтирование с Colvir basis (основной путь)
         if (dates && dates.length === periods + 1) {
 
             return PaymentCalculator._calculateAnnuityBy30_360(
@@ -65,13 +66,17 @@ export default class PaymentCalculator {
     }
 
     /**
-     * PMT через итерацию бисекции с 30/360 дисконтированием.
+     * PMT через аналитическое дисконтирование с Colvir basis.
+     *
+     * dailyRate = annualRate / 100 / COLVIR_BASIS
+     * cumulativeFactor_i = prod_{j=1}^{i} (1 + dailyRate * days30_360_j)
+     * PMT = principal / sum(1 / cumulativeFactor_i)
      *
      * @private
      */
     static _calculateAnnuityBy30_360(principal, annualRate, dates) {
 
-        const dailyRate = annualRate / 100 / 360;
+        const dailyRate = annualRate / 100 / COLVIR_BASIS;
 
         // Накопленные факторы дисконтирования для каждого периода
         const discountFactors = [];
@@ -83,7 +88,6 @@ export default class PaymentCalculator {
             discountFactors.push(cumFactor);
         }
 
-        // PV(PMT) = sum(PMT / factor_i)
         // PV(PMT) = PMT * sum(1 / factor_i) = principal
         // PMT = principal / sum(1 / factor_i)
         const sumInvFactors = discountFactors.reduce((s, f) => s + 1 / f, 0);
