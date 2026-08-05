@@ -214,10 +214,11 @@
 </div>
 
 <script type="module">
-import Loan from "./src/models/Loan.js";
-import GracePeriod from "./src/models/GracePeriod.js";
-import ScheduleEngine from "./src/engine/ScheduleEngine.js";
-import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js";
+/* v=2 — cache-bust: forces browser to re-fetch all modules */
+import Loan from "./src/models/Loan.js?v=2";
+import GracePeriod from "./src/models/GracePeriod.js?v=2";
+import ScheduleEngine from "./src/engine/ScheduleEngine.js?v=2";
+import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js?v=2";
 
 const els = {
     principal: document.getElementById("principal"),
