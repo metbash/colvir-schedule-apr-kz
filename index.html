@@ -122,8 +122,7 @@
                 <option value="ANNUITY" selected>Аннуитет</option>
             </select>
 
-            <div style="margin-top:14px;" class="section-title">ГЭСВ</div>
-            <label>Единоразовая комиссия, тг</label>
+            <label style="margin-top:14px;">Единоразовая комиссия, тг <span style="color:#667085;font-weight:400;">(+ГЭСВ)</span></label>
             <input id="upfrontFee" type="number" value="0" step="0.01" min="0">
             <div class="subtle" style="margin-top:4px;">Учитывается только в ГЭСВ. В графике платежей не отображается.</div>
 
@@ -213,14 +212,14 @@
 </div>
 
 <script type="module">
-/* v=5 */
-import Loan         from "./src/models/Loan.js?v=5";
-import GracePeriod  from "./src/models/GracePeriod.js?v=5";
-import LoanCalculator from "./src/services/LoanCalculator.js?v=5";
-import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js?v=5";
-import CashFlowSet from "./src/models/CashFlowSet.js?v=5";
-import CashFlow    from "./src/models/CashFlow.js?v=5";
-import APRCalculator from "./src/math/APRCalculator.js?v=5";
+/* v=6 */
+import Loan           from "./src/models/Loan.js?v=6";
+import GracePeriod   from "./src/models/GracePeriod.js?v=6";
+import LoanCalculator from "./src/services/LoanCalculator.js?v=6";
+import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js?v=6";
+import CashFlowSet   from "./src/models/CashFlowSet.js?v=6";
+import CashFlow      from "./src/models/CashFlow.js?v=6";
+import APRCalculator from "./src/math/APRCalculator.js?v=6";
 
 const els = {
     principal:         document.getElementById("principal"),
@@ -337,26 +336,26 @@ function readGracePeriods() {
 }
 
 /**
- * Пересчитать ГЭСВ с учётом единоразовой комиссии.
+ * Рассчитать ГЭСВ с учётом единоразовой комиссии.
  * Чистые поступления = principal - upfrontFee
- * Платежи берутся из графика без изменений.
  */
 function recalcAPR(schedule, issueDate, principal, upfrontFee) {
     try {
         const netInflow = principal - upfrontFee;
-        const flows = [];
+        const flowItems = [];
 
         // Положительный поток — выдача займа (нетто)
-        flows.push(new CashFlow({ date: issueDate, amount: netInflow }));
+        flowItems.push(new CashFlow({ date: issueDate, amount: netInflow }));
 
-        // Отрицательные потоки — фактические платежи из графика
+        // Отрицательные потоки — платежи из графика
         for (const row of schedule.rows) {
             if (row.metadata && row.metadata.kind === "ISSUE") continue;
             if (!row.payment || row.payment === 0) continue;
-            flows.push(new CashFlow({ date: new Date(row.paymentDate), amount: -row.payment }));
+            flowItems.push(new CashFlow({ date: new Date(row.paymentDate), amount: -row.payment }));
         }
 
-        const cashFlowSet = CashFlowSet.from(flows);
+        // Используем new CashFlowSet([...]) — нет статического метода from()
+        const cashFlowSet = new CashFlowSet(flowItems);
         return APRCalculator.calculate(cashFlowSet);
     } catch (e) {
         console.warn("APR recalc failed:", e.message);
@@ -389,12 +388,9 @@ function renderSchedule(result, issueDate, principal, upfrontFee) {
         els.scheduleBody.appendChild(tr);
     });
 
-    // Пересчёт ГЭСВ с единоразовой комиссией
     const apr = recalcAPR(schedule, issueDate, principal, upfrontFee);
 
-    // ─── Итоги + ГЭСВ ───────────────────────────────────────────────────────
     els.summary.innerHTML = "";
-
     const items = [
         { label: "Общий ОД",         value: fmt(schedule.totalPrincipal()),  gesv: false },
         { label: "Общие проценты",   value: fmt(schedule.totalInterest()),   gesv: false },
@@ -402,7 +398,6 @@ function renderSchedule(result, issueDate, principal, upfrontFee) {
         { label: "Строк графика",    value: schedule.length,                 gesv: false },
         { label: "ГЭСВ (годовых)",   value: fmtPct(apr ? apr.annualPercentRate : null), gesv: true }
     ];
-
     for (const item of items) {
         const el = document.createElement("div");
         el.className = "summary-item" + (item.gesv ? " gesv" : "");
@@ -457,11 +452,12 @@ els.calcBtn.addEventListener("click", () => {
         const calculator = new LoanCalculator(new KazakhstanBusinessCalendar());
         const result     = calculator.calculate(loan);
 
-        const issueDate  = new Date(els.issueDate.value);
-        const principal  = num(els.principal.value);
-        const upfrontFee = num(els.upfrontFee.value);
-
-        renderSchedule(result, issueDate, principal, upfrontFee);
+        renderSchedule(
+            result,
+            new Date(els.issueDate.value),
+            num(els.principal.value),
+            num(els.upfrontFee.value)
+        );
 
     } catch (e) {
         console.error(e);
