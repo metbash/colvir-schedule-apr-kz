@@ -83,6 +83,11 @@
             color: #667085;
             margin-top: 6px;
         }
+        .fee-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
         @media (max-width: 1100px) {
             .grid { grid-template-columns: 1fr; }
             .summary { grid-template-columns: repeat(2, 1fr); }
@@ -121,6 +126,19 @@
                 <option value="EQUAL_PRINCIPAL">Равные части ОД</option>
                 <option value="ANNUITY" selected>Аннуитет</option>
             </select>
+
+            <div style="margin-top:14px;" class="section-title">Комиссии (для ГЭСВ)</div>
+            <div class="fee-row">
+                <div>
+                    <label>Единоразовая комиссия, тг</label>
+                    <input id="upfrontFee" type="number" value="0" step="0.01" min="0">
+                </div>
+                <div>
+                    <label>Ежемесячная комиссия, тг</label>
+                    <input id="monthlyFee" type="number" value="0" step="0.01" min="0">
+                </div>
+            </div>
+            <div class="subtle" style="margin-top:4px;">Комиссии учитываются в ГЭСВ (не отображаются в графике погашения).</div>
 
             <div style="margin-top:16px;" class="section-title">Льготные периоды</div>
             <div class="subtle">Можно задать льготу быстро на N месяцев или отметить месяцы вручную.</div>
@@ -208,11 +226,14 @@
 </div>
 
 <script type="module">
-/* v=3 */
-import Loan         from "./src/models/Loan.js?v=3";
-import GracePeriod  from "./src/models/GracePeriod.js?v=3";
-import LoanCalculator from "./src/services/LoanCalculator.js?v=3";
-import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js?v=3";
+/* v=4 */
+import Loan         from "./src/models/Loan.js?v=4";
+import GracePeriod  from "./src/models/GracePeriod.js?v=4";
+import LoanCalculator from "./src/services/LoanCalculator.js?v=4";
+import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js?v=4";
+import CashFlowSet from "./src/models/CashFlowSet.js?v=4";
+import CashFlow    from "./src/models/CashFlow.js?v=4";
+import APRCalculator from "./src/math/APRCalculator.js?v=4";
 
 const els = {
     principal:         document.getElementById("principal"),
@@ -223,6 +244,8 @@ const els = {
     lastPaymentDate:   document.getElementById("lastPaymentDate"),
     paymentMethod:     document.getElementById("paymentMethod"),
     distributionMode:  document.getElementById("distributionMode"),
+    upfrontFee:        document.getElementById("upfrontFee"),
+    monthlyFee:        document.getElementById("monthlyFee"),
 
     modeSimpleBtn:  document.getElementById("modeSimpleBtn"),
     modeManualBtn:  document.getElementById("modeManualBtn"),
@@ -327,9 +350,38 @@ function readGracePeriods() {
     return periods;
 }
 
+/**
+ * Пересчитать ГЭСВ с учётом комиссий.
+ * Чистые поступления = principal - upfrontFee
+ * Каждый платёж увеличивается на monthlyFee (если задана)
+ */
+function recalcAPR(schedule, issueDate, principal, upfrontFee, monthlyFee) {
+    try {
+        const netInflow = principal - upfrontFee;
+        const flows = [];
+
+        // Положительный поток — выдача займа (нетто)
+        flows.push(new CashFlow({ date: issueDate, amount: netInflow }));
+
+        // Отрицательные потоки — все платежи + ежемесячная комиссия
+        for (const row of schedule.rows) {
+            if (row.metadata && row.metadata.kind === "ISSUE") continue;
+            if (!row.payment || row.payment === 0) continue;
+            const amount = -(row.payment + (monthlyFee || 0));
+            flows.push(new CashFlow({ date: new Date(row.paymentDate), amount }));
+        }
+
+        const cashFlowSet = CashFlowSet.from(flows);
+        return APRCalculator.calculate(cashFlowSet);
+    } catch (e) {
+        console.warn("APR recalc failed:", e.message);
+        return null;
+    }
+}
+
 // ─── Рендер таблицы ────────────────────────────────────────────────────────
-function renderSchedule(result) {
-    const { schedule, apr } = result;
+function renderSchedule(result, issueDate, principal, upfrontFee, monthlyFee) {
+    const { schedule } = result;
     els.scheduleBody.innerHTML = "";
 
     schedule.rows.forEach((row, idx) => {
@@ -351,6 +403,9 @@ function renderSchedule(result) {
         `;
         els.scheduleBody.appendChild(tr);
     });
+
+    // Пересчитать ГЭСВ с учётом комиссий
+    const apr = recalcAPR(schedule, issueDate, principal, upfrontFee, monthlyFee);
 
     // ─── Итоги + ГЭСВ ───────────────────────────────────────────────────────
     els.summary.innerHTML = "";
@@ -417,7 +472,12 @@ els.calcBtn.addEventListener("click", () => {
         const calculator = new LoanCalculator(new KazakhstanBusinessCalendar());
         const result     = calculator.calculate(loan);
 
-        renderSchedule(result);
+        const issueDate   = new Date(els.issueDate.value);
+        const principal   = num(els.principal.value);
+        const upfrontFee  = num(els.upfrontFee.value);
+        const monthlyFee  = num(els.monthlyFee.value);
+
+        renderSchedule(result, issueDate, principal, upfrontFee, monthlyFee);
 
     } catch (e) {
         console.error(e);

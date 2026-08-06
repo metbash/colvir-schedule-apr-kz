@@ -2,25 +2,20 @@
  * ==========================================================
  * InterestCalculator
  *
- * Colvir convention: basis = 360 / 1.05 ≈ 342.857
+ * Colvir convention: 30/360
  *
- * interest = balance * annualRate / 100 * days / BASIS
- *          = balance * annualRate / 100 * days * 1.05 / 360
+ * interest = balance * annualRate / 100 * days30_360 / 360
+ *
+ * days must be computed via DateUtils.days30_360().
  * ==========================================================
  */
 
 import Money from "../core/Money.js";
 
-/**
- * Colvir day-count basis: 360 / 1.05 ≈ 342.857
- * Applied consistently to both interest accrual and PMT discounting.
- */
-export const COLVIR_BASIS = 360 / 1.05;
-
 export default class InterestCalculator {
 
     /**
-     * Расчет процентов (конвенция Colvir).
+     * Расчет процентов (конвенция Colvir 30/360).
      *
      * @param {number} balance
      * @param {number} annualRate  — % годовых (например, 20, не 0.20)
@@ -56,7 +51,7 @@ export default class InterestCalculator {
 
             /
 
-            COLVIR_BASIS;
+            360;
 
         return Money.round(
 

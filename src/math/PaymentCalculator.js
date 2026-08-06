@@ -1,7 +1,7 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
+ * Version: 4.0-dev3
  *
  * PaymentCalculator.js
  *
@@ -11,7 +11,6 @@
 
 import Money from "../core/Money.js";
 import DateUtils from "../core/DateUtils.js";
-import { COLVIR_BASIS } from "./InterestCalculator.js";
 
 export default class PaymentCalculator {
 
@@ -22,7 +21,7 @@ export default class PaymentCalculator {
      * по конвенции 30/360 с фактическими датами платежей.
      *
      * Каждый платёж дисконтируется по накопленному произведению
-     * периодных ставок: r_i = annualRate / COLVIR_BASIS * days30_360(prevDate, paymentDate)
+     * периодных ставок: r_i = annualRate/100/360 * days30_360(prevDate, paymentDate)
      *
      * PV = sum( PMT / prod(1 + r_i) ) = principal  => решаем относительно PMT.
      *
@@ -46,7 +45,7 @@ export default class PaymentCalculator {
             return Money.round(principal / periods);
         }
 
-        // С датами: 30/360 дисконтирование с Colvir basis (основной путь)
+        // С датами: 30/360 дисконтирование (основной путь)
         if (dates && dates.length === periods + 1) {
 
             return PaymentCalculator._calculateAnnuityBy30_360(
@@ -66,9 +65,9 @@ export default class PaymentCalculator {
     }
 
     /**
-     * PMT через аналитическое дисконтирование с Colvir basis.
+     * PMT через аналитическое дисконтирование 30/360.
      *
-     * dailyRate = annualRate / 100 / COLVIR_BASIS
+     * dailyRate = annualRate / 100 / 360
      * cumulativeFactor_i = prod_{j=1}^{i} (1 + dailyRate * days30_360_j)
      * PMT = principal / sum(1 / cumulativeFactor_i)
      *
@@ -76,9 +75,8 @@ export default class PaymentCalculator {
      */
     static _calculateAnnuityBy30_360(principal, annualRate, dates) {
 
-        const dailyRate = annualRate / 100 / COLVIR_BASIS;
+        const dailyRate = annualRate / 100 / 360;
 
-        // Накопленные факторы дисконтирования для каждого периода
         const discountFactors = [];
         let cumFactor = 1.0;
 
@@ -88,8 +86,6 @@ export default class PaymentCalculator {
             discountFactors.push(cumFactor);
         }
 
-        // PV(PMT) = PMT * sum(1 / factor_i) = principal
-        // PMT = principal / sum(1 / factor_i)
         const sumInvFactors = discountFactors.reduce((s, f) => s + 1 / f, 0);
         const payment = principal / sumInvFactors;
 
