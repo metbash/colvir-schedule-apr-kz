@@ -130,14 +130,10 @@
 </div>
 
 <script type="module">
-/* v=7 */
-import Loan            from "./src/models/Loan.js?v=7";
-import GracePeriod    from "./src/models/GracePeriod.js?v=7";
-import LoanCalculator from "./src/services/LoanCalculator.js?v=7";
-import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js?v=7";
-import CashFlowSet    from "./src/models/CashFlowSet.js?v=7";
-import CashFlow       from "./src/models/CashFlow.js?v=7";
-import APRCalculator  from "./src/math/APRCalculator.js?v=7";
+import Loan            from "./src/models/Loan.js";
+import GracePeriod    from "./src/models/GracePeriod.js";
+import LoanCalculator from "./src/services/LoanCalculator.js";
+import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js";
 
 const els = {
     principal:         document.getElementById("principal"),
@@ -244,45 +240,8 @@ function readGracePeriods() {
     return periods;
 }
 
-/**
- * ГЭСВ: чистая выдача = principal - upfrontFee (отток заёмщика в момент выдачи).
- * Все платёжные строки графика — отрицательные потоки.
- */
-function recalcAPR(schedule, issueDate, principal, upfrontFee) {
-    try {
-        const netInflow = principal - upfrontFee;
-        if (netInflow <= 0) {
-            console.warn("recalcAPR: netInflow <= 0, пропускаем");
-            return null;
-        }
-
-        const flowItems = [
-            new CashFlow({ date: new Date(issueDate), amount: netInflow })
-        ];
-
-        for (const row of schedule.rows) {
-            if (row.metadata && row.metadata.kind === "ISSUE") continue;
-            const pmt = Number(row.payment);
-            if (!Number.isFinite(pmt) || pmt === 0) continue;
-            flowItems.push(new CashFlow({ date: new Date(row.paymentDate), amount: -pmt }));
-        }
-
-        console.log("recalcAPR flows:", flowItems.length,
-            "inflow:", flowItems[0].amount,
-            "first outflow:", flowItems[1]?.amount);
-
-        const cashFlowSet = new CashFlowSet(flowItems);
-        const result = APRCalculator.calculate(cashFlowSet);
-        console.log("GESV result:", result);
-        return result;
-    } catch (e) {
-        console.error("recalcAPR FAILED:", e);
-        return null;
-    }
-}
-
-function renderSchedule(result, issueDate, principal, upfrontFee) {
-    const { schedule } = result;
+function renderSchedule(result) {
+    const { schedule, apr } = result;
     els.scheduleBody.innerHTML = "";
 
     schedule.rows.forEach((row, idx) => {
@@ -303,7 +262,9 @@ function renderSchedule(result, issueDate, principal, upfrontFee) {
         els.scheduleBody.appendChild(tr);
     });
 
-    const apr = recalcAPR(schedule, issueDate, principal, upfrontFee);
+    const gesvValue = apr && Number.isFinite(apr.annualPercentRate)
+        ? apr.annualPercentRate
+        : 0;
 
     els.summary.innerHTML = "";
     const items = [
@@ -311,7 +272,7 @@ function renderSchedule(result, issueDate, principal, upfrontFee) {
         { label: "Общие проценты", value: fmt(schedule.totalInterest()),  gesv: false },
         { label: "Общая сумма",    value: fmt(schedule.totalPayment()),   gesv: false },
         { label: "Строк графика",  value: schedule.length,                gesv: false },
-        { label: "ГЭСВ (годовых)", value: fmtPct(apr ? apr.annualPercentRate : 0), gesv: true }
+        { label: "ГЭСВ (годовых)", value: fmtPct(gesvValue),             gesv: true  }
     ];
     for (const item of items) {
         const el = document.createElement("div");
@@ -350,12 +311,14 @@ els.calcBtn.addEventListener("click", () => {
         }
 
         const gracePeriods = readGracePeriods();
+        const upfrontFee   = num(els.upfrontFee.value);
+        const issueDate    = new Date(els.issueDate.value);
 
         const loan = new Loan({
             principal:        num(els.principal.value),
             annualRate:       num(els.annualRate.value),
             term:             parseInt(els.term.value, 10),
-            issueDate:        new Date(els.issueDate.value),
+            issueDate,
             firstPaymentDate: new Date(els.firstPaymentDate.value),
             lastPaymentDate:  els.lastPaymentDate.value ? new Date(els.lastPaymentDate.value) : null,
             paymentMethod:    els.paymentMethod.value,
@@ -363,15 +326,14 @@ els.calcBtn.addEventListener("click", () => {
             gracePeriods
         });
 
-        const calculator = new LoanCalculator(new KazakhstanBusinessCalendar());
-        const result     = calculator.calculate(loan);
+        const options = upfrontFee > 0
+            ? { fees: [{ date: issueDate, amount: upfrontFee, description: "Единоразовая комиссия" }] }
+            : {};
 
-        renderSchedule(
-            result,
-            new Date(els.issueDate.value),
-            num(els.principal.value),
-            num(els.upfrontFee.value)
-        );
+        const calculator = new LoanCalculator(new KazakhstanBusinessCalendar());
+        const result     = calculator.calculate(loan, options);
+
+        renderSchedule(result);
 
     } catch (e) {
         console.error("calcBtn error:", e);
