@@ -35,129 +35,63 @@
         .summary-item.gesv { border-color: #1976d2; background: #e8f4ff; }
         .summary-item.gesv .label { color: #1565c0; }
         .summary-item.gesv .value { color: #1565c0; }
-
         .mode-tabs { display: flex; gap: 8px; margin: 8px 0 12px; }
         .mode-tabs button { margin-top: 0; flex: 1; }
         .mode-tabs button.active { background: #0f5fbf; }
         .panel { display: none; }
         .panel.active { display: block; }
-
         .row-3 { display: grid; grid-template-columns: 1.1fr 0.9fr 0.9fr; gap: 8px; }
-
-        .months-head {
-            display: grid;
-            grid-template-columns: 64px 120px 1fr 1fr;
-            gap: 8px;
-            padding: 8px 0;
-            font-size: 12px;
-            color: #667085;
-            font-weight: 700;
-        }
-        .month-row {
-            display: grid;
-            grid-template-columns: 64px 120px 1fr 1fr;
-            gap: 8px;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-        .month-row .period {
-            font-weight: 700;
-            text-align: center;
-            font-size: 13px;
-        }
-        .check-wrap {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            border: 1px solid #cfd6dd;
-            border-radius: 6px;
-            height: 38px;
-            background: #fff;
-        }
-        .check-wrap input {
-            width: 18px;
-            height: 18px;
-        }
-        .small-note {
-            font-size: 12px;
-            color: #667085;
-            margin-top: 6px;
-        }
-        @media (max-width: 1100px) {
-            .grid { grid-template-columns: 1fr; }
-            .summary { grid-template-columns: repeat(2, 1fr); }
-        }
+        .months-head { display: grid; grid-template-columns: 64px 120px 1fr 1fr; gap: 8px; padding: 8px 0; font-size: 12px; color: #667085; font-weight: 700; }
+        .month-row { display: grid; grid-template-columns: 64px 120px 1fr 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
+        .month-row .period { font-weight: 700; text-align: center; font-size: 13px; }
+        .check-wrap { display: flex; justify-content: center; align-items: center; border: 1px solid #cfd6dd; border-radius: 6px; height: 38px; background: #fff; }
+        .check-wrap input { width: 18px; height: 18px; }
+        .small-note { font-size: 12px; color: #667085; margin-top: 6px; }
+        @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } .summary { grid-template-columns: repeat(2, 1fr); } }
     </style>
 </head>
 <body>
 <div class="app">
     <h1>Colvir Schedule &amp; APR Calculator (KZ)</h1>
-
     <div class="grid">
-        <!-- ═══════════════════════════════ ЛЕВАЯ ПАНЕЛЬ ═══════════════════════════════ -->
         <div class="card">
             <div class="section-title">Параметры займа</div>
-
             <label>Сумма кредита</label>
             <input id="principal" type="number" value="230575460" step="0.01">
-
             <label>Ставка, % годовых</label>
             <input id="annualRate" type="number" value="20" step="0.01">
-
             <label>Срок, месяцев</label>
             <input id="term" type="number" value="12" step="1">
-
             <label>Дата начала / выдачи</label>
             <input id="issueDate" type="date" value="2026-06-25">
-
             <label>Дата первого платежа</label>
             <input id="firstPaymentDate" type="date" value="2026-07-21">
-
             <label>Дата последнего платежа</label>
             <input id="lastPaymentDate" type="date" value="2027-06-25">
-
             <label>Метод погашения</label>
             <select id="paymentMethod">
                 <option value="EQUAL_PRINCIPAL">Равные части ОД</option>
                 <option value="ANNUITY" selected>Аннуитет</option>
             </select>
-
             <label style="margin-top:14px;">Единоразовая комиссия, тг <span style="color:#667085;font-weight:400;">(+ГЭСВ)</span></label>
             <input id="upfrontFee" type="number" value="0" step="0.01" min="0">
             <div class="subtle" style="margin-top:4px;">Учитывается только в ГЭСВ. В графике платежей не отображается.</div>
-
             <div style="margin-top:16px;" class="section-title">Льготные периоды</div>
             <div class="subtle">Можно задать льготу быстро на N месяцев или отметить месяцы вручную.</div>
-
             <label>Распределение отложенного платежа</label>
             <select id="distributionMode">
                 <option value="ALL_NEXT_PAYMENTS" selected>На все предстоящие платежи</option>
                 <option value="FIRST_PAYMENT">На первый предстоящий платеж</option>
             </select>
-
             <div class="mode-tabs">
                 <button id="modeSimpleBtn" class="active" type="button">Простой режим</button>
                 <button id="modeManualBtn" type="button">По месяцам</button>
             </div>
-
             <div id="simplePanel" class="panel active">
                 <div class="row-3">
-                    <div>
-                        <label>Льготных месяцев</label>
-                        <input id="simpleMonths" type="number" min="1" step="1" value="3">
-                    </div>
-                    <div>
-                        <label>ОД</label>
-                        <div class="check-wrap">
-                            <input id="simpleOd" type="checkbox" checked>
-                        </div>
-                    </div>
-                    <div>
-                        <label>%</label>
-                        <div class="check-wrap">
-                            <input id="simplePct" type="checkbox">
-                        </div>
-                    </div>
+                    <div><label>Льготных месяцев</label><input id="simpleMonths" type="number" min="1" step="1" value="3"></div>
+                    <div><label>ОД</label><div class="check-wrap"><input id="simpleOd" type="checkbox" checked></div></div>
+                    <div><label>%</label><div class="check-wrap"><input id="simplePct" type="checkbox"></div></div>
                 </div>
                 <div class="toolbar">
                     <button id="applySimpleBtn" type="button">Применить льготу</button>
@@ -165,61 +99,45 @@
                 </div>
                 <div class="small-note">Льгота применится к первым N периодам графика.</div>
             </div>
-
             <div id="manualPanel" class="panel">
                 <div class="toolbar" style="margin-bottom:10px;">
                     <button id="fillManualBtn" type="button">Заполнить периодами</button>
                     <button id="clearManualBtn" class="secondary" type="button">Очистить</button>
                 </div>
-                <div class="months-head">
-                    <div>Период</div>
-                    <div>Дата</div>
-                    <div>ОД</div>
-                    <div>%</div>
-                </div>
+                <div class="months-head"><div>Период</div><div>Дата</div><div>ОД</div><div>%</div></div>
                 <div id="manualRows"></div>
                 <div class="small-note">Отметь нужные месяцы вручную.</div>
             </div>
-
             <button id="calcBtn">Рассчитать график</button>
             <div id="errorBox" class="error"></div>
         </div>
 
-        <!-- ═══════════════════════════════ ПРАВАЯ ПАНЕЛЬ ═══════════════════════════════ -->
         <div class="card">
             <div class="section-title">График платежей</div>
             <div class="table-wrap">
                 <table id="scheduleTable">
-                    <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Дата платежа</th>
-                        <th>Сумма платежа</th>
-                        <th>Вознаграждение</th>
-                        <th>Основной долг</th>
-                        <th>Остаток ОД</th>
-                        <th>Кол-во дней</th>
-                        <th>Тип</th>
-                    </tr>
-                    </thead>
+                    <thead><tr>
+                        <th>#</th><th>Дата платежа</th><th>Сумма платежа</th>
+                        <th>Вознаграждение</th><th>Основной долг</th>
+                        <th>Остаток ОД</th><th>Кол-во дней</th><th>Тип</th>
+                    </tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
-
             <div class="summary" id="summary"></div>
         </div>
     </div>
 </div>
 
 <script type="module">
-/* v=6 */
-import Loan           from "./src/models/Loan.js?v=6";
-import GracePeriod   from "./src/models/GracePeriod.js?v=6";
-import LoanCalculator from "./src/services/LoanCalculator.js?v=6";
-import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js?v=6";
-import CashFlowSet   from "./src/models/CashFlowSet.js?v=6";
-import CashFlow      from "./src/models/CashFlow.js?v=6";
-import APRCalculator from "./src/math/APRCalculator.js?v=6";
+/* v=7 */
+import Loan            from "./src/models/Loan.js?v=7";
+import GracePeriod    from "./src/models/GracePeriod.js?v=7";
+import LoanCalculator from "./src/services/LoanCalculator.js?v=7";
+import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js?v=7";
+import CashFlowSet    from "./src/models/CashFlowSet.js?v=7";
+import CashFlow       from "./src/models/CashFlow.js?v=7";
+import APRCalculator  from "./src/math/APRCalculator.js?v=7";
 
 const els = {
     principal:         document.getElementById("principal"),
@@ -231,40 +149,36 @@ const els = {
     paymentMethod:     document.getElementById("paymentMethod"),
     distributionMode:  document.getElementById("distributionMode"),
     upfrontFee:        document.getElementById("upfrontFee"),
-
-    modeSimpleBtn:  document.getElementById("modeSimpleBtn"),
-    modeManualBtn:  document.getElementById("modeManualBtn"),
-    simplePanel:    document.getElementById("simplePanel"),
-    manualPanel:    document.getElementById("manualPanel"),
-
-    simpleMonths:   document.getElementById("simpleMonths"),
-    simpleOd:       document.getElementById("simpleOd"),
-    simplePct:      document.getElementById("simplePct"),
-    applySimpleBtn: document.getElementById("applySimpleBtn"),
-    clearSimpleBtn: document.getElementById("clearSimpleBtn"),
-
-    fillManualBtn:  document.getElementById("fillManualBtn"),
-    clearManualBtn: document.getElementById("clearManualBtn"),
-    manualRows:     document.getElementById("manualRows"),
-
-    calcBtn:        document.getElementById("calcBtn"),
-    errorBox:       document.getElementById("errorBox"),
-    scheduleBody:   document.querySelector("#scheduleTable tbody"),
-    summary:        document.getElementById("summary")
+    modeSimpleBtn:     document.getElementById("modeSimpleBtn"),
+    modeManualBtn:     document.getElementById("modeManualBtn"),
+    simplePanel:       document.getElementById("simplePanel"),
+    manualPanel:       document.getElementById("manualPanel"),
+    simpleMonths:      document.getElementById("simpleMonths"),
+    simpleOd:          document.getElementById("simpleOd"),
+    simplePct:         document.getElementById("simplePct"),
+    applySimpleBtn:    document.getElementById("applySimpleBtn"),
+    clearSimpleBtn:    document.getElementById("clearSimpleBtn"),
+    fillManualBtn:     document.getElementById("fillManualBtn"),
+    clearManualBtn:    document.getElementById("clearManualBtn"),
+    manualRows:        document.getElementById("manualRows"),
+    calcBtn:           document.getElementById("calcBtn"),
+    errorBox:          document.getElementById("errorBox"),
+    scheduleBody:      document.querySelector("#scheduleTable tbody"),
+    summary:           document.getElementById("summary")
 };
 
 let currentMode = "simple";
 
-function num(v)         { const n = Number(v); return Number.isFinite(n) ? n : 0; }
-function fmt(v)         { return Number(v || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 }); }
-function fmtPct(v)      { return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " %"; }
-function formatDate(d)  {
+function num(v)        { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+function fmt(v)        { return Number(v || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 }); }
+function fmtPct(v)     { return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " %"; }
+function formatDate(d) {
     const dt = new Date(d);
     return `${String(dt.getDate()).padStart(2,"0")}.${String(dt.getMonth()+1).padStart(2,"0")}.${dt.getFullYear()}`;
 }
-function addMonthsSafe(dateValue, monthsToAdd) {
+function addMonthsSafe(dateValue, n) {
     const d = new Date(dateValue), day = d.getDate();
-    d.setMonth(d.getMonth() + monthsToAdd);
+    d.setMonth(d.getMonth() + n);
     if (d.getDate() < day) d.setDate(0);
     return d;
 }
@@ -279,7 +193,7 @@ function setMode(mode) {
 
 function clearManualRows() { els.manualRows.innerHTML = ""; }
 
-function createMonthRow(period, paymentDate, odChecked=false, pctChecked=false) {
+function createMonthRow(period, paymentDate, odChecked = false, pctChecked = false) {
     const row = document.createElement("div");
     row.className = "month-row";
     row.dataset.period = String(period);
@@ -311,9 +225,7 @@ function applySimpleGrace() {
     for (let p = 1; p <= Math.min(months, term); p++) {
         const planned     = addMonthsSafe(els.firstPaymentDate.value, p - 1);
         const paymentDate = calendar.adjustPaymentDate(planned);
-        els.manualRows.appendChild(
-            createMonthRow(p, paymentDate, els.simpleOd.checked, els.simplePct.checked)
-        );
+        els.manualRows.appendChild(createMonthRow(p, paymentDate, els.simpleOd.checked, els.simplePct.checked));
     }
     setMode("manual");
 }
@@ -326,44 +238,49 @@ function readGracePeriods() {
         const od  = row.querySelector(".m-od").checked;
         const pct = row.querySelector(".m-pct").checked;
         if (od || pct) {
-            periods.push(new GracePeriod({
-                startPeriod: period, endPeriod: period,
-                odGrace: od, percentGrace: pct
-            }));
+            periods.push(new GracePeriod({ startPeriod: period, endPeriod: period, odGrace: od, percentGrace: pct }));
         }
     }
     return periods;
 }
 
 /**
- * Рассчитать ГЭСВ с учётом единоразовой комиссии.
- * Чистые поступления = principal - upfrontFee
+ * ГЭСВ: чистая выдача = principal - upfrontFee (отток заёмщика в момент выдачи).
+ * Все платёжные строки графика — отрицательные потоки.
  */
 function recalcAPR(schedule, issueDate, principal, upfrontFee) {
     try {
         const netInflow = principal - upfrontFee;
-        const flowItems = [];
-
-        // Положительный поток — выдача займа (нетто)
-        flowItems.push(new CashFlow({ date: issueDate, amount: netInflow }));
-
-        // Отрицательные потоки — платежи из графика
-        for (const row of schedule.rows) {
-            if (row.metadata && row.metadata.kind === "ISSUE") continue;
-            if (!row.payment || row.payment === 0) continue;
-            flowItems.push(new CashFlow({ date: new Date(row.paymentDate), amount: -row.payment }));
+        if (netInflow <= 0) {
+            console.warn("recalcAPR: netInflow <= 0, пропускаем");
+            return null;
         }
 
-        // Используем new CashFlowSet([...]) — нет статического метода from()
+        const flowItems = [
+            new CashFlow({ date: new Date(issueDate), amount: netInflow })
+        ];
+
+        for (const row of schedule.rows) {
+            if (row.metadata && row.metadata.kind === "ISSUE") continue;
+            const pmt = Number(row.payment);
+            if (!Number.isFinite(pmt) || pmt === 0) continue;
+            flowItems.push(new CashFlow({ date: new Date(row.paymentDate), amount: -pmt }));
+        }
+
+        console.log("recalcAPR flows:", flowItems.length,
+            "inflow:", flowItems[0].amount,
+            "first outflow:", flowItems[1]?.amount);
+
         const cashFlowSet = new CashFlowSet(flowItems);
-        return APRCalculator.calculate(cashFlowSet);
+        const result = APRCalculator.calculate(cashFlowSet);
+        console.log("GESV result:", result);
+        return result;
     } catch (e) {
-        console.warn("APR recalc failed:", e.message);
+        console.error("recalcAPR FAILED:", e);
         return null;
     }
 }
 
-// ─── Рендер таблицы ────────────────────────────────────────────────────────
 function renderSchedule(result, issueDate, principal, upfrontFee) {
     const { schedule } = result;
     els.scheduleBody.innerHTML = "";
@@ -371,10 +288,8 @@ function renderSchedule(result, issueDate, principal, upfrontFee) {
     schedule.rows.forEach((row, idx) => {
         const isIssue = row.metadata && row.metadata.kind === "ISSUE";
         const isGrace = row.rowType === "GRACE";
-
         const tr = document.createElement("tr");
         if (isGrace) tr.classList.add("grace-row");
-
         tr.innerHTML = `
             <td class="left">${idx}</td>
             <td class="left">${formatDate(row.paymentDate)}</td>
@@ -392,11 +307,11 @@ function renderSchedule(result, issueDate, principal, upfrontFee) {
 
     els.summary.innerHTML = "";
     const items = [
-        { label: "Общий ОД",         value: fmt(schedule.totalPrincipal()),  gesv: false },
-        { label: "Общие проценты",   value: fmt(schedule.totalInterest()),   gesv: false },
-        { label: "Общая сумма",      value: fmt(schedule.totalPayment()),    gesv: false },
-        { label: "Строк графика",    value: schedule.length,                 gesv: false },
-        { label: "ГЭСВ (годовых)",   value: fmtPct(apr ? apr.annualPercentRate : null), gesv: true }
+        { label: "Общий ОД",       value: fmt(schedule.totalPrincipal()), gesv: false },
+        { label: "Общие проценты", value: fmt(schedule.totalInterest()),  gesv: false },
+        { label: "Общая сумма",    value: fmt(schedule.totalPayment()),   gesv: false },
+        { label: "Строк графика",  value: schedule.length,                gesv: false },
+        { label: "ГЭСВ (годовых)", value: fmtPct(apr ? apr.annualPercentRate : 0), gesv: true }
     ];
     for (const item of items) {
         const el = document.createElement("div");
@@ -406,7 +321,6 @@ function renderSchedule(result, issueDate, principal, upfrontFee) {
     }
 }
 
-// ─── События ────────────────────────────────────────────────────────────────
 els.modeSimpleBtn.addEventListener("click", () => setMode("simple"));
 els.modeManualBtn.addEventListener("click", () => {
     setMode("manual");
@@ -420,15 +334,15 @@ els.clearSimpleBtn.addEventListener("click", () => {
 });
 els.fillManualBtn.addEventListener("click", buildManualRows);
 els.clearManualBtn.addEventListener("click", clearManualRows);
-els.term.addEventListener("change", () => { if (currentMode==="manual") buildManualRows(); });
+els.term.addEventListener("change", () => { if (currentMode === "manual") buildManualRows(); });
 els.firstPaymentDate.addEventListener("change", () => {
-    if (currentMode==="manual" && els.manualRows.children.length) buildManualRows();
+    if (currentMode === "manual" && els.manualRows.children.length) buildManualRows();
 });
 
 els.calcBtn.addEventListener("click", () => {
-    els.errorBox.textContent  = "";
+    els.errorBox.textContent   = "";
     els.scheduleBody.innerHTML = "";
-    els.summary.innerHTML     = "";
+    els.summary.innerHTML      = "";
 
     try {
         if (!els.manualRows.children.length) {
@@ -460,7 +374,7 @@ els.calcBtn.addEventListener("click", () => {
         );
 
     } catch (e) {
-        console.error(e);
+        console.error("calcBtn error:", e);
         els.errorBox.textContent = e.stack || e.message || String(e);
     }
 });
