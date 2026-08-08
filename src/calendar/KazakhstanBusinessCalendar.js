@@ -106,6 +106,9 @@ export default class KazakhstanBusinessCalendar {
         return [...observed];
     }
 
+    // ─── Полный набор праздников (base + observed) ───────────────────────────
+    // Используется для isHoliday() / isWorkingDay() — например, при подсчёте
+    // фактических рабочих дней или APR.  НЕ используется при сдвиге платежей.
     getHolidaySet(year) {
         return new Set([
             ...this.getBaseHolidayDates(year),
@@ -122,9 +125,28 @@ export default class KazakhstanBusinessCalendar {
         return !this.isWeekend(date) && !this.isHoliday(date);
     }
 
+    // ─── Набор праздников только из базового списка (без observed) ───────────
+    // Colvir сдвигает платёжную дату только через фиксированные + динамические
+    // праздники.  Перенесённые (observed) нерабочие дни при этом игнорируются.
+    getBaseHolidaySet(year) {
+        return new Set(this.getBaseHolidayDates(year));
+    }
+
+    isBaseHoliday(date) {
+        const iso = toIsoLocal(date);
+        return this.getBaseHolidaySet(date.getFullYear()).has(iso);
+    }
+
+    isPaymentWorkingDay(date) {
+        return !this.isWeekend(date) && !this.isBaseHoliday(date);
+    }
+
+    // ─── Сдвиг платёжной даты ────────────────────────────────────────────────
+    // Использует isPaymentWorkingDay (только base holidays, без observed),
+    // что точно воспроизводит поведение Colvir.
     moveToNextWorkingDay(date) {
         let d = cloneDate(date);
-        while (!this.isWorkingDay(d)) {
+        while (!this.isPaymentWorkingDay(d)) {
             d = addDays(d, 1);
         }
         return d;
