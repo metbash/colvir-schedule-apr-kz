@@ -191,11 +191,26 @@ export default class ScheduleEngine {
             } else {
 
                 if (afterGraceEqualPrincipal !== null) {
+                    // afterGraceEqualPrincipal уже учитывает только нормальные периоды.
+                    // Последний период закрывает копеечный остаток.
                     principal = period === totalPeriods
                         ? openingBalance
                         : Money.round(afterGraceEqualPrincipal);
 
+                } else if (hasAnyGrace) {
+                    // Есть grace-периоды, но afterGrace ещё не инициализирован —
+                    // значит мы ещё в начале графика (возможно, сам grace или до него).
+                    // Считаем нормальных периодов во всём loan и делим на них.
+                    // БЛОК 3 ниже обнулит principal если это odGrace-период.
+                    const normalCount = _countNormalPeriods(loan);
+                    principal = period === totalPeriods
+                        ? openingBalance
+                        : (normalCount > 0
+                            ? Money.round(loan.principal / normalCount)
+                            : openingBalance);
+
                 } else {
+                    // Нет grace: просто делим на totalPeriods
                     principal = period === totalPeriods
                         ? openingBalance
                         : Money.round(loan.principal / totalPeriods);
@@ -241,7 +256,9 @@ export default class ScheduleEngine {
 
                 }
 
-                // Равные доли: пересчёт части ОД после odGrace
+                // Равные доли + ALL_NEXT_PAYMENTS:
+                // При первом нормальном периоде после odGrace пересчитываем базовую
+                // долю ОД, деля остаток только на НОРМАЛЬНЫЕ (не-grace) периоды.
                 if (
                     !isAnnuity &&
                     distributionMode === DistributionMode.ALL_NEXT_PAYMENTS &&
@@ -251,8 +268,10 @@ export default class ScheduleEngine {
                         g => g && g.odGrace && g.endPeriod < period
                     );
                     if (hadOdGrace) {
-                        afterGraceEqualPrincipal = remainingPeriods > 0
-                            ? Money.round(openingBalance / remainingPeriods)
+                        // Считаем только нормальные периоды начиная с текущего
+                        const remainingNormal = _countRemainingNormalPeriods(loan, period);
+                        afterGraceEqualPrincipal = remainingNormal > 0
+                            ? Money.round(openingBalance / remainingNormal)
                             : openingBalance;
                         principal = period === totalPeriods
                             ? openingBalance
@@ -373,4 +392,42 @@ function _calculateSkippedPrincipal(loan, untilPeriod) {
     }
 
     return skipped;
+}
+
+/**
+ * Подсчитать общее кол-во НОРМАЛЬНЫХ (не-odGrace) периодов в графике.
+ * Используется для EQUAL_PRINCIPAL когда есть grace-периоды:
+ * базовая доля ОД = principal / normalCount.
+ */
+function _countNormalPeriods(loan) {
+    let count = 0;
+    for (let p = 1; p <= loan.term; p++) {
+        const grace = loan.gracePeriods
+            ? loan.gracePeriods.find(
+                g => g && typeof g.includes === "function" && g.includes(p)
+              )
+            : undefined;
+        const isOdGrace = grace && grace.odGrace;
+        if (!isOdGrace) count++;
+    }
+    return count || loan.term;
+}
+
+/**
+ * Подсчитать кол-во НОРМАЛЬНЫХ (не-odGrace) периодов начиная с fromPeriod
+ * до конца графика (включительно).
+ * Используется в ALL_NEXT_PAYMENTS для пересчёта доли ОД после льготы.
+ */
+function _countRemainingNormalPeriods(loan, fromPeriod) {
+    let count = 0;
+    for (let p = fromPeriod; p <= loan.term; p++) {
+        const grace = loan.gracePeriods
+            ? loan.gracePeriods.find(
+                g => g && typeof g.includes === "function" && g.includes(p)
+              )
+            : undefined;
+        const isOdGrace = grace && grace.odGrace;
+        if (!isOdGrace) count++;
+    }
+    return count || 1;
 }
