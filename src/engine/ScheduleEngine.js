@@ -23,6 +23,17 @@
  * distributionMode:
  *   FIRST_PAYMENT    — накопленные % добавляются к первому платежу после льготы.
  *   ALL_NEXT_PAYMENTS — равномерно по всем оставшимся периодам.
+ *
+ * Примечание по PMT:
+ *   При первоначальном расчёте (без льготы) PMT считается через 30/360-дисконтирование
+ *   с реальными датами платежей (_calculateAnnuityBy30_360) — это даёт точное
+ *   совпадение с Colvir для графиков без льготы.
+ *
+ *   При пересчёте PMT ПОСЛЕ льготного периода Colvir использует стандартную
+ *   формулу rate/12 (без учёта реальных дат):
+ *     PMT = PV * (r/12) / (1 − (1 + r/12)^−n)
+ *   Поэтому при justAfterGrace мы вызываем calculateAnnuity БЕЗ массива дат,
+ *   что автоматически использует этот fallback.
  * ==========================================================
  */
 
@@ -175,14 +186,15 @@ export default class ScheduleEngine {
 
                 } else if (justAfterGrace) {
                     // Первый период после льготы: пересчитываем PMT.
-                    const remainingDates = _buildPaymentDates(
-                        loan, this.calendar, totalPeriods, period - 1
-                    );
+                    //
+                    // Colvir использует стандартную формулу rate/12 (без реальных дат):
+                    //   PMT = PV * (r/12) / (1 − (1 + r/12)^−n)
+                    // Поэтому передаём dates=null (fallback в PaymentCalculator).
                     annuityBasePayment = PaymentCalculator.calculateAnnuity(
                         openingBalance,
                         loan.annualRate,
-                        remainingPeriods,
-                        remainingDates
+                        remainingPeriods
+                        // dates не передаём → используется rate/12 формула
                     );
                     annuityRecalculated = true;
 
