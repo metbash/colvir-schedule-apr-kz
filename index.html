@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Colvir Schedule & APR Calculator (KZ)</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <style>
         body { margin: 0; font-family: Arial, sans-serif; background: #f5f6f8; color: #111; }
         .app { max-width: 1500px; margin: 0 auto; padding: 20px; }
@@ -19,6 +20,8 @@
         button:hover { background: #1565c0; }
         button.secondary { background: #607085; }
         button.secondary:hover { background: #4f5d70; }
+        button.export-btn { background: #1a7a43; }
+        button.export-btn:hover { background: #155e35; }
         .toolbar { display: flex; gap: 8px; margin-top: 10px; }
         .toolbar button { width: auto; flex: 1; }
         .error { color: #b42318; margin-top: 10px; white-space: pre-wrap; font-size: 13px; }
@@ -113,7 +116,10 @@
         </div>
 
         <div class="card">
-            <div class="section-title">График платежей</div>
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                <div class="section-title" style="margin-bottom:0;">График платежей</div>
+                <button id="exportBtn" class="export-btn" type="button" style="width:auto; margin-top:0; padding:8px 18px; font-size:13px;">⬇ Экспорт в Excel</button>
+            </div>
             <div class="table-wrap">
                 <table id="scheduleTable">
                     <thead><tr>
@@ -158,12 +164,14 @@ const els = {
     clearManualBtn:    document.getElementById("clearManualBtn"),
     manualRows:        document.getElementById("manualRows"),
     calcBtn:           document.getElementById("calcBtn"),
+    exportBtn:         document.getElementById("exportBtn"),
     errorBox:          document.getElementById("errorBox"),
     scheduleBody:      document.querySelector("#scheduleTable tbody"),
     summary:           document.getElementById("summary")
 };
 
 let currentMode = "simple";
+let lastResult  = null;   // сохраняем последний результат для экспорта
 
 function num(v)        { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 function fmt(v)        { return Number(v || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 }); }
@@ -171,6 +179,10 @@ function fmtPct(v)     { return Number(v || 0).toLocaleString("ru-RU", { minimum
 function formatDate(d) {
     const dt = new Date(d);
     return `${String(dt.getDate()).padStart(2,"0")}.${String(dt.getMonth()+1).padStart(2,"0")}.${dt.getFullYear()}`;
+}
+function isoDate(d) {
+    const dt = new Date(d);
+    return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
 }
 function addMonthsSafe(dateValue, n) {
     const d = new Date(dateValue), day = d.getDate();
@@ -282,6 +294,95 @@ function renderSchedule(result) {
     }
 }
 
+// ─── Excel export ────────────────────────────────────────────────────────────
+function exportToExcel() {
+    if (!lastResult) {
+        alert("Сначала рассчитайте график.");
+        return;
+    }
+
+    const { schedule, apr } = lastResult;
+    const gesvValue = apr && Number.isFinite(apr.annualPercentRate) ? apr.annualPercentRate : 0;
+
+    const paymentMethodLabel = { ANNUITY: "Аннуитет", EQUAL_PRINCIPAL: "Равные части ОД" };
+    const methodText = paymentMethodLabel[els.paymentMethod.value] || els.paymentMethod.value;
+
+    // ── Блок параметров (строки 1-9) ────────────────────────────────────────
+    const paramRows = [
+        ["Параметр", "Значение"],
+        ["Сумма кредита, тг",        num(els.principal.value)],
+        ["Ставка, % годовых",        num(els.annualRate.value)],
+        ["Срок, мес.",               parseInt(els.term.value, 10)],
+        ["Дата выдачи",              isoDate(els.issueDate.value)],
+        ["Дата первого платежа",     isoDate(els.firstPaymentDate.value)],
+        ["Дата последнего платежа",  isoDate(els.lastPaymentDate.value)],
+        ["Метод погашения",          methodText],
+        ["Единоразовая комиссия, тг", num(els.upfrontFee.value)],
+    ];
+
+    // ── Блок итогов (строки 11-15) ──────────────────────────────────────────
+    const summaryRows = [
+        ["ИТОГИ", ""],
+        ["Общий ОД, тг",        schedule.totalPrincipal()],
+        ["Общие проценты, тг",  schedule.totalInterest()],
+        ["Общая сумма, тг",     schedule.totalPayment()],
+        ["ГЭСВ, %",             gesvValue],
+    ];
+
+    // ── Заголовок таблицы графика ────────────────────────────────────────────
+    const tableHeader = [["#", "Дата платежа", "Сумма платежа", "Вознаграждение", "Основной долг", "Остаток ОД", "Кол-во дней", "Тип"]];
+
+    // ── Строки графика ───────────────────────────────────────────────────────
+    const tableRows = schedule.rows.map((row, idx) => {
+        const isIssue = row.metadata && row.metadata.kind === "ISSUE";
+        return [
+            idx,
+            isoDate(row.paymentDate),
+            isIssue ? "" : row.payment,
+            isIssue ? "" : row.interest,
+            isIssue ? "" : row.principal,
+            row.closingBalance,
+            row.days,
+            row.rowType || ""
+        ];
+    });
+
+    // ── Собираем один лист: параметры → пустая строка → итоги → пустая → таблица
+    const sheetData = [
+        ...paramRows,
+        ["", ""],                   // пустая строка-разделитель
+        ...summaryRows,
+        ["", ""],                   // пустая строка-разделитель
+        ...tableHeader,
+        ...tableRows
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(sheetData);
+
+    // ── Ширина столбцов ──────────────────────────────────────────────────────
+    ws["!cols"] = [
+        { wch: 30 },  // A
+        { wch: 20 },  // B
+        { wch: 18 },  // C
+        { wch: 18 },  // D
+        { wch: 18 },  // E
+        { wch: 18 },  // F
+        { wch: 14 },  // G
+        { wch: 12 },  // H
+    ];
+
+    // ── Имя файла с датой-временем ───────────────────────────────────────────
+    const now  = new Date();
+    const ts   = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}_${String(now.getHours()).padStart(2,"0")}${String(now.getMinutes()).padStart(2,"0")}`;
+    const principal = Math.round(num(els.principal.value) / 1000);
+    const filename  = `our_schedule_${principal}k_${ts}.xlsx`;
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "График и ГЭСВ");
+    XLSX.writeFile(wb, filename);
+}
+
+// ─── Listeners ───────────────────────────────────────────────────────────────
 els.modeSimpleBtn.addEventListener("click", () => setMode("simple"));
 els.modeManualBtn.addEventListener("click", () => {
     setMode("manual");
@@ -300,10 +401,13 @@ els.firstPaymentDate.addEventListener("change", () => {
     if (currentMode === "manual" && els.manualRows.children.length) buildManualRows();
 });
 
+els.exportBtn.addEventListener("click", exportToExcel);
+
 els.calcBtn.addEventListener("click", () => {
     els.errorBox.textContent   = "";
     els.scheduleBody.innerHTML = "";
     els.summary.innerHTML      = "";
+    lastResult = null;
 
     try {
         if (!els.manualRows.children.length) {
@@ -333,6 +437,7 @@ els.calcBtn.addEventListener("click", () => {
         const calculator = new LoanCalculator(new KazakhstanBusinessCalendar());
         const result     = calculator.calculate(loan, options);
 
+        lastResult = result;
         renderSchedule(result);
 
     } catch (e) {
