@@ -1,7 +1,7 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev2
+ * Version: 4.0-dev4
  *
  * ScheduleEngine.js
  *
@@ -9,31 +9,25 @@
  *
  * 1. odGrace=true  (отсрочка ОД):
  *    Льготный период: principal=0, interest начисляется и платится.
- *    После: PMT пересчитывается от текущего остатка на оставшиеся периоды.
+ *    После: PMT не пересчитывается — используется PMT, рассчитанный
+ *    ОДИН РАЗ через calculateAnnuityWithGrace() до начала цикла.
+ *
+ *    Алгоритм Colvir для PMT с odGrace:
+ *      PMT = (PV − PV_grace_discounted) / Σ(df⁻¹ для нельготных периодов)
+ *    где PV_grace = Σ(interest_i / cumFactor_i) по льготным периодам.
  *
  * 2. percentGrace=true (отсрочка процентов):
  *    Льготный период: PMT целиком идёт в ОД, interest=0 (накапливается).
- *    Баланс снижается быстрее → PMT пересчитывается после льготы.
- *    Накопленные проценты распределяются по distributionMode.
+ *    Баланс снижается быстрее. Накопленные проценты распределяются
+ *    по distributionMode.
  *
  * 3. odGrace + percentGrace (полная отсрочка):
  *    Льготный период: principal=0, interest=0, payment=0.
- *    После: PMT пересчитывается, deferredInterest распределяется по distributionMode.
+ *    Накопленные проценты распределяются по distributionMode.
  *
  * distributionMode:
  *   FIRST_PAYMENT    — накопленные % добавляются к первому платежу после льготы.
  *   ALL_NEXT_PAYMENTS — равномерно по всем оставшимся периодам.
- *
- * Примечание по PMT:
- *   При первоначальном расчёте (без льготы) PMT считается через 30/360-дисконтирование
- *   с реальными датами платежей (_calculateAnnuityBy30_360) — это даёт точное
- *   совпадение с Colvir для графиков без льготы.
- *
- *   При пересчёте PMT ПОСЛЕ льготного периода Colvir использует стандартную
- *   формулу rate/12 (без учёта реальных дат):
- *     PMT = PV * (r/12) / (1 − (1 + r/12)^−n)
- *   Поэтому при justAfterGrace мы вызываем calculateAnnuity БЕЗ массива дат,
- *   что автоматически использует этот fallback.
  * ==========================================================
  */
 
@@ -70,14 +64,12 @@ export default class ScheduleEngine {
             metadata:       { technical: true, kind: "ISSUE" }
         }));
 
-        const totalPeriods    = loan.term;
+        const totalPeriods     = loan.term;
         const distributionMode = loan.distributionMode || DistributionMode.FIRST_PAYMENT;
-        const isAnnuity       = loan.paymentMethod === PaymentMethod.ANNUITY;
+        const isAnnuity        = loan.paymentMethod === PaymentMethod.ANNUITY;
 
-        let balance       = Money.round(loan.principal);
-        let prevDate      = DateUtils.clone(loan.issueDate);
-
-        // Накопленные (deferred) проценты
+        let balance          = Money.round(loan.principal);
+        let prevDate         = DateUtils.clone(loan.issueDate);
         let deferredInterest = 0;
 
         // Для EQUAL_PRINCIPAL: равная часть ОД после отсрочки (ALL_NEXT)
@@ -85,25 +77,35 @@ export default class ScheduleEngine {
         // Для EQUAL_PRINCIPAL + FIRST_PAYMENT: признак что первый платёж уже увеличен
         let firstPaymentAfterOdGraceHandled = false;
 
-        // АННУИТЕТ: базовый PMT (пересчитывается после льготы)
-        let annuityBasePayment  = 0;
-        let annuityRecalculated = false;
+        // АННУИТЕТ: PMT считается ОДИН РАЗ до цикла
+        let annuityBasePayment = 0;
 
         if (isAnnuity) {
             const paymentDates = _buildPaymentDates(
                 loan, this.calendar, totalPeriods
             );
-            annuityBasePayment = PaymentCalculator.calculateAnnuity(
-                loan.principal,
-                loan.annualRate,
-                totalPeriods,
-                paymentDates
-            );
+
+            const hasOdGrace = loan.gracePeriods &&
+                loan.gracePeriods.some(g => g && g.odGrace);
+
+            if (hasOdGrace) {
+                // Алгоритм Colvir: PMT с учётом льготных периодов через дисконтирование
+                annuityBasePayment = PaymentCalculator.calculateAnnuityWithGrace(
+                    loan.principal,
+                    loan.annualRate,
+                    paymentDates,
+                    loan.gracePeriods
+                );
+            } else {
+                annuityBasePayment = PaymentCalculator.calculateAnnuity(
+                    loan.principal,
+                    loan.annualRate,
+                    totalPeriods,
+                    paymentDates
+                );
+            }
         }
 
-        // ─────────────────────────────────────────────────────────────
-        // Удобный флаг: есть ли вообще какая-либо отсрочка?
-        // ─────────────────────────────────────────────────────────────
         const hasAnyGrace = loan.gracePeriods && loan.gracePeriods.length > 0;
 
         for (let period = 1; period <= totalPeriods; period++) {
@@ -136,17 +138,9 @@ export default class ScheduleEngine {
                   )
                 : undefined;
 
-            const inGrace     = !!grace;
+            const inGrace      = !!grace;
             const odGrace      = inGrace && grace.odGrace;
             const percentGrace = inGrace && grace.percentGrace;
-
-            // Первый период ПОСЛЕ окончания льготы
-            const justAfterGrace = hasAnyGrace &&
-                !inGrace &&
-                !annuityRecalculated &&
-                loan.gracePeriods.some(
-                    g => g && g.endPeriod < period
-                );
 
             let rowType = inGrace ? RowType.GRACE : RowType.NORMAL;
 
@@ -178,32 +172,14 @@ export default class ScheduleEngine {
 
                 } else if (percentGrace) {
                     // Отсрочка процентов: весь PMT идёт в ОД.
-                    // interest накапливается ниже.
                     principal = Math.min(
                         Money.round(annuityBasePayment),
                         openingBalance
                     );
 
-                } else if (justAfterGrace) {
-                    // Первый период после льготы: пересчитываем PMT.
-                    //
-                    // Colvir использует стандартную формулу rate/12 (без реальных дат):
-                    //   PMT = PV * (r/12) / (1 − (1 + r/12)^−n)
-                    // Поэтому передаём dates=null (fallback в PaymentCalculator).
-                    annuityBasePayment = PaymentCalculator.calculateAnnuity(
-                        openingBalance,
-                        loan.annualRate,
-                        remainingPeriods
-                        // dates не передаём → используется rate/12 формула
-                    );
-                    annuityRecalculated = true;
-
-                    principal = Money.round(annuityBasePayment - interest);
-                    if (principal < 0) principal = 0;
-                    if (principal > openingBalance) principal = openingBalance;
-
                 } else {
-                    // Обычный период
+                    // Обычный период (в т.ч. первый после льготы)
+                    // PMT уже рассчитан правильно через calculateAnnuityWithGrace
                     principal = Money.round(annuityBasePayment - interest);
                     if (principal < 0) principal = 0;
                     if (principal > openingBalance) principal = openingBalance;
@@ -351,37 +327,18 @@ export default class ScheduleEngine {
 
 /**
  * Построить массив дат для расчёта PMT аннуитета.
- *
- * startFrom=0: весь срок от issueDate
- * startFrom=k: остаток от даты k-го платежа
+ * Всегда строит ПОЛНЫЙ массив от issueDate до последнего платежа (N+1 дат).
  */
-function _buildPaymentDates(
-    loan,
-    calendar,
-    totalPeriods,
-    startFrom = 0
-) {
+function _buildPaymentDates(loan, calendar, totalPeriods) {
     const dates = [];
+    dates.push(DateUtils.clone(loan.issueDate));
 
-    if (startFrom === 0) {
-        dates.push(DateUtils.clone(loan.issueDate));
-    } else {
-        const prev = DateUtils.addMonths(
-            loan.firstPaymentDate,
-            startFrom - 1
-        );
-        dates.push(calendar ? calendar.adjustPaymentDate(prev) : prev);
-    }
-
-    for (let p = startFrom + 1; p <= totalPeriods; p++) {
+    for (let p = 1; p <= totalPeriods; p++) {
         let planned;
         if (p === totalPeriods && loan.lastPaymentDate) {
             planned = DateUtils.clone(loan.lastPaymentDate);
         } else {
-            planned = DateUtils.addMonths(
-                loan.firstPaymentDate,
-                p - 1
-            );
+            planned = DateUtils.addMonths(loan.firstPaymentDate, p - 1);
         }
         const adjusted = calendar
             ? calendar.adjustPaymentDate(planned)

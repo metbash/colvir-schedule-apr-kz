@@ -1,7 +1,7 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev3
+ * Version: 4.0-dev4
  *
  * PaymentCalculator.js
  *
@@ -61,6 +61,71 @@ export default class PaymentCalculator {
         const factor = Math.pow(1 + monthlyRate, periods);
         const payment = principal * monthlyRate * factor / (factor - 1);
         return Money.round(payment);
+
+    }
+
+    /**
+     * Аннуитетный PMT с учётом льготного периода (odGrace).
+     *
+     * Алгоритм Colvir:
+     *   1. Льготные платежи (только проценты) дисконтируются к дате выдачи.
+     *   2. Из PV вычитается их приведённая стоимость → pv_remaining.
+     *   3. PMT = pv_remaining / Σ(1/df_j) для нельготных периодов j.
+     *
+     * Это даёт точное совпадение с Colvir (например, 1 132 484.97).
+     *
+     * @param {number}   principal    — сумма кредита
+     * @param {number}   annualRate   — % годовых (23, не 0.23)
+     * @param {Date[]}   dates        — [issueDate, pay1, ..., payN], длина N+1
+     * @param {Object[]} gracePeriods — массив GracePeriod (с .includes(p), .odGrace)
+     * @returns {number}
+     */
+    static calculateAnnuityWithGrace(
+        principal,
+        annualRate,
+        dates,
+        gracePeriods
+    ) {
+
+        if (annualRate === 0) {
+            const totalPeriods = dates.length - 1;
+            const normalCount = Array.from(
+                { length: totalPeriods },
+                (_, i) => i + 1
+            ).filter(
+                p => !gracePeriods.some(g => g && g.includes && g.includes(p))
+            ).length;
+            return Money.round(principal / normalCount);
+        }
+
+        const dailyRate = annualRate / 100 / 360;
+        const totalPeriods = dates.length - 1;
+
+        let cumFactor = 1.0;
+        let pvGrace   = 0;
+        const normalInvFactors = [];
+
+        for (let i = 1; i <= totalPeriods; i++) {
+            const d = DateUtils.days30_360(dates[i - 1], dates[i]);
+            cumFactor *= (1 + dailyRate * d);
+
+            const inGrace = gracePeriods.some(
+                g => g && typeof g.includes === "function" && g.includes(i)
+            );
+
+            if (inGrace) {
+                // Дисконтируем льготный процентный платёж
+                const interest = principal * dailyRate * d;
+                pvGrace += interest / cumFactor;
+            } else {
+                normalInvFactors.push(1 / cumFactor);
+            }
+        }
+
+        const sumInv   = normalInvFactors.reduce((s, f) => s + f, 0);
+        const pvRemain = principal - pvGrace;
+
+        return Money.round(pvRemain / sumInv);
 
     }
 
