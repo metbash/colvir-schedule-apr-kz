@@ -22,6 +22,8 @@
         button.secondary:hover { background: #4f5d70; }
         button.export-btn { background: #1a7a43; }
         button.export-btn:hover { background: #155e35; }
+        button.recalc-btn { background: #c27d00; }
+        button.recalc-btn:hover { background: #a66800; }
         .toolbar { display: flex; gap: 8px; margin-top: 10px; }
         .toolbar button { width: auto; flex: 1; }
         .error { color: #b42318; margin-top: 10px; white-space: pre-wrap; font-size: 13px; }
@@ -30,6 +32,17 @@
         th { background: #f7f9fb; text-align: center; }
         td.left, th.left { text-align: left; }
         tr.grace-row td { background: #fff8e1; }
+        /* editable cells */
+        td.editable { background: #f0f7ff; cursor: text; position: relative; }
+        td.editable:hover { background: #dceeff; }
+        td.editable input {
+            width: 100%; box-sizing: border-box; border: none; outline: 2px solid #1976d2;
+            border-radius: 3px; padding: 2px 4px; font-size: 12px; background: #fff;
+            text-align: right;
+        }
+        td.editable input[type="date"] { text-align: left; font-size: 11px; padding: 1px 3px; }
+        td.edited { background: #fff3cd !important; }
+        .edit-hint { font-size: 11px; color: #1976d2; margin-top: 4px; font-style: italic; }
         .table-wrap { overflow-x: auto; }
         .summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
         .summary-item { background: #f8fafc; border: 1px solid #e6ebf0; border-radius: 8px; padding: 12px; }
@@ -116,10 +129,14 @@
         </div>
 
         <div class="card">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
                 <div class="section-title" style="margin-bottom:0;">График платежей</div>
-                <button id="exportBtn" class="export-btn" type="button" style="width:auto; margin-top:0; padding:8px 18px; font-size:13px;">⬇ Экспорт в Excel</button>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button id="recalcBtn" class="recalc-btn" type="button" style="width:auto; margin-top:0; padding:8px 14px; font-size:13px; display:none;">↺ Пересчитать ГЭСВ</button>
+                    <button id="exportBtn" class="export-btn" type="button" style="width:auto; margin-top:0; padding:8px 18px; font-size:13px;">⬇ Экспорт в Excel</button>
+                </div>
             </div>
+            <div class="edit-hint" id="editHint" style="display:none;">💡 Ячейки выделенные синим — редактируемые (дата, ОД, вознаграждение). После редактирования нажмите «↺ Пересчитать ГЭСВ».</div>
             <div class="table-wrap">
                 <table id="scheduleTable">
                     <thead><tr>
@@ -139,6 +156,9 @@
 import Loan            from "./src/models/Loan.js";
 import GracePeriod    from "./src/models/GracePeriod.js";
 import LoanCalculator from "./src/services/LoanCalculator.js";
+import CashFlowBuilder from "./src/builders/CashFlowBuilder.js";
+import APRCalculator   from "./src/math/APRCalculator.js";
+import { APR }         from "./src/core/Constants.js";
 import KazakhstanBusinessCalendar from "./src/calendar/KazakhstanBusinessCalendar.js";
 
 const els = {
@@ -165,13 +185,17 @@ const els = {
     manualRows:        document.getElementById("manualRows"),
     calcBtn:           document.getElementById("calcBtn"),
     exportBtn:         document.getElementById("exportBtn"),
+    recalcBtn:         document.getElementById("recalcBtn"),
     errorBox:          document.getElementById("errorBox"),
     scheduleBody:      document.querySelector("#scheduleTable tbody"),
-    summary:           document.getElementById("summary")
+    summary:           document.getElementById("summary"),
+    editHint:          document.getElementById("editHint")
 };
 
 let currentMode = "simple";
-let lastResult  = null;   // сохраняем последний результат для экспорта
+let lastResult  = null;
+// Хранит ручные правки: { rowIndex: { date?, principal?, interest? } }
+let manualEdits = {};
 
 function num(v)        { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 function fmt(v)        { return Number(v || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 }); }
@@ -252,39 +276,121 @@ function readGracePeriods() {
     return periods;
 }
 
-function renderSchedule(result) {
-    const { schedule, apr } = result;
-    els.scheduleBody.innerHTML = "";
-
-    schedule.rows.forEach((row, idx) => {
-        const isIssue = row.metadata && row.metadata.kind === "ISSUE";
-        const isGrace = row.rowType === "GRACE";
-        const tr = document.createElement("tr");
-        if (isGrace) tr.classList.add("grace-row");
-        tr.innerHTML = `
-            <td class="left">${idx}</td>
-            <td class="left">${formatDate(row.paymentDate)}</td>
-            <td>${isIssue ? "—" : fmt(row.payment)}</td>
-            <td>${isIssue ? "—" : fmt(row.interest)}</td>
-            <td>${isIssue ? "—" : fmt(row.principal)}</td>
-            <td>${fmt(row.closingBalance)}</td>
-            <td>${row.days}</td>
-            <td class="left">${row.rowType || ""}</td>
-        `;
-        els.scheduleBody.appendChild(tr);
+// ─── Получить текущие данные строк (с учётом правок) ─────────────────────────
+function getCurrentRows() {
+    if (!lastResult) return [];
+    return lastResult.schedule.rows.map((row, idx) => {
+        const edit = manualEdits[idx] || {};
+        const date      = edit.date      !== undefined ? new Date(edit.date)      : new Date(row.paymentDate);
+        const principal = edit.principal !== undefined ? Number(edit.principal)   : row.principal;
+        const interest  = edit.interest  !== undefined ? Number(edit.interest)    : row.interest;
+        return { ...row, paymentDate: date, principal, interest,
+                 payment: (row.metadata && row.metadata.kind === "ISSUE") ? 0 : (principal + interest) };
     });
+}
 
-    const gesvValue = apr && Number.isFinite(apr.annualPercentRate)
-        ? apr.annualPercentRate
-        : 0;
+// ─── Пересчёт ГЭСВ по текущим (возможно отредактированным) строкам ──────────
+function recalcGESV() {
+    if (!lastResult) return;
+    try {
+        const rows = getCurrentRows();
+        const issueRow = rows.find(r => r.metadata && r.metadata.kind === "ISSUE");
+        if (!issueRow) return;
+        const issueDate = new Date(issueRow.paymentDate);
+        const upfrontFee = num(els.upfrontFee.value);
 
+        // Строим cash-flows вручную
+        const cashFlows = [];
+        // Выдача (отток)
+        cashFlows.push({ date: issueDate, amount: -(num(els.principal.value) - upfrontFee) });
+        // Платежи (притоки)
+        for (const row of rows) {
+            if (row.metadata && row.metadata.kind === "ISSUE") continue;
+            const payment = Number(row.principal || 0) + Number(row.interest || 0);
+            if (payment !== 0) {
+                cashFlows.push({ date: new Date(row.paymentDate), amount: payment });
+            }
+        }
+        if (upfrontFee > 0) {
+            cashFlows.push({ date: issueDate, amount: upfrontFee });
+        }
+
+        const apr = APRCalculator.calculate(cashFlows, { basisDays: APR.BASIS_DAYS });
+
+        // Пересчитываем итоги
+        const totalPrincipal = rows.reduce((s, r) => s + (r.principal || 0), 0);
+        const totalInterest  = rows.reduce((s, r) => s + (r.interest  || 0), 0);
+        const totalPayment   = totalPrincipal + totalInterest;
+
+        renderSummary({ totalPrincipal, totalInterest, totalPayment, rowCount: rows.length }, apr);
+    } catch(e) {
+        console.error("recalcGESV error:", e);
+    }
+}
+
+// ─── Сделать ячейку редактируемой ────────────────────────────────────────────
+function makeEditable(td, rowIdx, field, currentValue) {
+    td.classList.add("editable");
+    td.title = "Нажмите для редактирования";
+
+    td.addEventListener("click", function(e) {
+        if (td.querySelector("input")) return;
+        const isDate = field === "date";
+        const inp = document.createElement("input");
+        inp.type = isDate ? "date" : "number";
+        if (isDate) {
+            inp.value = isoDate(currentValue);
+        } else {
+            inp.value = Number(currentValue).toFixed(2);
+            inp.step = "0.01";
+        }
+        td.innerHTML = "";
+        td.appendChild(inp);
+        inp.focus();
+        inp.select();
+
+        function commit() {
+            if (!manualEdits[rowIdx]) manualEdits[rowIdx] = {};
+            let val = inp.value;
+            if (!isDate) val = parseFloat(val) || 0;
+            manualEdits[rowIdx][field] = val;
+            currentValue = val;
+            td.innerHTML = isDate ? formatDate(new Date(val)) : fmt(val);
+            td.classList.add("edited");
+            // обновляем сумму платежа в той же строке
+            updateRowTotal(rowIdx);
+            // показываем кнопку пересчёта
+            els.recalcBtn.style.display = "";
+        }
+        inp.addEventListener("blur", commit);
+        inp.addEventListener("keydown", ev => {
+            if (ev.key === "Enter") { commit(); }
+            if (ev.key === "Escape") {
+                td.innerHTML = isDate ? formatDate(new Date(currentValue)) : fmt(currentValue);
+            }
+        });
+    });
+}
+
+function updateRowTotal(rowIdx) {
+    const tr = els.scheduleBody.querySelector(`tr[data-row="${rowIdx}"]`);
+    if (!tr) return;
+    const rows = getCurrentRows();
+    const row = rows[rowIdx];
+    if (!row || (row.metadata && row.metadata.kind === "ISSUE")) return;
+    const paymentCell = tr.querySelector(".payment-cell");
+    if (paymentCell) paymentCell.textContent = fmt(Number(row.principal||0) + Number(row.interest||0));
+}
+
+function renderSummary(totals, apr) {
+    const gesvValue = apr && Number.isFinite(apr.annualPercentRate) ? apr.annualPercentRate : 0;
     els.summary.innerHTML = "";
     const items = [
-        { label: "Общий ОД",       value: fmt(schedule.totalPrincipal()), gesv: false },
-        { label: "Общие проценты", value: fmt(schedule.totalInterest()),  gesv: false },
-        { label: "Общая сумма",    value: fmt(schedule.totalPayment()),   gesv: false },
-        { label: "Строк графика",  value: schedule.length,                gesv: false },
-        { label: "ГЭСВ (годовых)", value: fmtPct(gesvValue),             gesv: true  }
+        { label: "Общий ОД",       value: fmt(totals.totalPrincipal), gesv: false },
+        { label: "Общие проценты", value: fmt(totals.totalInterest),  gesv: false },
+        { label: "Общая сумма",    value: fmt(totals.totalPayment),   gesv: false },
+        { label: "Строк графика",  value: totals.rowCount,            gesv: false },
+        { label: "ГЭСВ (годовых)", value: fmtPct(gesvValue),         gesv: true  }
     ];
     for (const item of items) {
         const el = document.createElement("div");
@@ -294,91 +400,147 @@ function renderSchedule(result) {
     }
 }
 
-// ─── Excel export ────────────────────────────────────────────────────────────
+function renderSchedule(result) {
+    const { schedule, apr } = result;
+    els.scheduleBody.innerHTML = "";
+    manualEdits = {};
+
+    schedule.rows.forEach((row, idx) => {
+        const isIssue = row.metadata && row.metadata.kind === "ISSUE";
+        const isGrace = row.rowType === "GRACE";
+        const tr = document.createElement("tr");
+        tr.dataset.row = idx;
+        if (isGrace) tr.classList.add("grace-row");
+
+        // Ячейки
+        const tdIdx      = document.createElement("td"); tdIdx.className = "left"; tdIdx.textContent = idx;
+        const tdDate     = document.createElement("td"); tdDate.className = "left"; tdDate.textContent = formatDate(row.paymentDate);
+        const tdPayment  = document.createElement("td"); tdPayment.className = "payment-cell"; tdPayment.textContent = isIssue ? "—" : fmt(row.payment);
+        const tdInterest = document.createElement("td"); tdInterest.textContent = isIssue ? "—" : fmt(row.interest);
+        const tdPrincipal= document.createElement("td"); tdPrincipal.textContent = isIssue ? "—" : fmt(row.principal);
+        const tdBalance  = document.createElement("td"); tdBalance.textContent = fmt(row.closingBalance);
+        const tdDays     = document.createElement("td"); tdDays.textContent = row.days;
+        const tdType     = document.createElement("td"); tdType.className = "left"; tdType.textContent = row.rowType || "";
+
+        // Редактируемые поля (не для строки выдачи)
+        if (!isIssue) {
+            makeEditable(tdDate,      idx, "date",      row.paymentDate);
+            makeEditable(tdPrincipal, idx, "principal", row.principal);
+            makeEditable(tdInterest,  idx, "interest",  row.interest);
+        }
+
+        tr.append(tdIdx, tdDate, tdPayment, tdInterest, tdPrincipal, tdBalance, tdDays, tdType);
+        els.scheduleBody.appendChild(tr);
+    });
+
+    renderSummary({
+        totalPrincipal: schedule.totalPrincipal(),
+        totalInterest:  schedule.totalInterest(),
+        totalPayment:   schedule.totalPayment(),
+        rowCount:       schedule.length
+    }, apr);
+
+    // Показываем подсказку
+    els.editHint.style.display = "";
+}
+
+// ─── Excel export (формат как в Colvir) ──────────────────────────────────────
 function exportToExcel() {
-    if (!lastResult) {
-        alert("Сначала рассчитайте график.");
-        return;
-    }
+    if (!lastResult) { alert("Сначала рассчитайте график."); return; }
 
     const { schedule, apr } = lastResult;
+    const rows = getCurrentRows();
+
     const gesvValue = apr && Number.isFinite(apr.annualPercentRate) ? apr.annualPercentRate : 0;
+    // Пересчитываем итоги с учётом правок
+    const totalPrincipal = rows.reduce((s,r) => s + (r.principal||0), 0);
+    const totalInterest  = rows.reduce((s,r) => s + (r.interest||0), 0);
+    const totalPayment   = totalPrincipal + totalInterest;
+    const totalRows      = rows.filter(r => !(r.metadata && r.metadata.kind==="ISSUE")).length + 1;
+
+    // Получаем пересчитанный ГЭСВ если были правки
+    let gesvFinal = gesvValue;
+    if (Object.keys(manualEdits).length > 0) {
+        try {
+            const issueDate = new Date(rows.find(r => r.metadata && r.metadata.kind==="ISSUE").paymentDate);
+            const upfrontFee = num(els.upfrontFee.value);
+            const cashFlows = [{ date: issueDate, amount: -(num(els.principal.value) - upfrontFee) }];
+            for (const row of rows) {
+                if (row.metadata && row.metadata.kind==="ISSUE") continue;
+                const p = Number(row.principal||0)+Number(row.interest||0);
+                if (p !== 0) cashFlows.push({ date: new Date(row.paymentDate), amount: p });
+            }
+            if (upfrontFee > 0) cashFlows.push({ date: issueDate, amount: upfrontFee });
+            const aprRes = APRCalculator.calculate(cashFlows, { basisDays: APR.BASIS_DAYS });
+            if (aprRes && Number.isFinite(aprRes.annualPercentRate)) gesvFinal = aprRes.annualPercentRate;
+        } catch(e) {}
+    }
 
     const paymentMethodLabel = { ANNUITY: "Аннуитет", EQUAL_PRINCIPAL: "Равные части ОД" };
     const methodText = paymentMethodLabel[els.paymentMethod.value] || els.paymentMethod.value;
 
-    // ── Блок параметров (строки 1-9) ────────────────────────────────────────
-    const paramRows = [
-        ["Параметр", "Значение"],
-        ["Сумма кредита, тг",        num(els.principal.value)],
-        ["Ставка, % годовых",        num(els.annualRate.value)],
-        ["Срок, мес.",               parseInt(els.term.value, 10)],
-        ["Дата выдачи",              isoDate(els.issueDate.value)],
-        ["Дата первого платежа",     isoDate(els.firstPaymentDate.value)],
-        ["Дата последнего платежа",  isoDate(els.lastPaymentDate.value)],
-        ["Метод погашения",          methodText],
-        ["Единоразовая комиссия, тг", num(els.upfrontFee.value)],
+    // ── Шапка договора (стиль Colvir) ────────────────────────────────────────
+    const today = new Date();
+    const todayStr = formatDate(today);
+    const issueDateStr = formatDate(new Date(els.issueDate.value));
+    const lastDateStr  = formatDate(new Date(els.lastPaymentDate.value));
+    const rate = num(els.annualRate.value);
+    const principal = num(els.principal.value);
+
+    const headerRows = [
+        ["", "", "", "Приложение 1"],
+        ["", "", "", "к Договору банковского займа"],
+        ["", "", "", "от " + issueDateStr],
+        ["", "График погашения займа", "", ""],
+        ["", "от " + todayStr, "", ""],
+        ["Сумма и валюта займа", "", "", `${principal.toLocaleString("ru-RU")} KZT`],
+        ["Размер ставки вознаграждения:", "", "", `${rate} процентов годовых`],
+        ["Размер годовой эффективной ставки вознаграждения:", "", "", `${gesvFinal.toLocaleString("ru-RU", {minimumFractionDigits:2, maximumFractionDigits:2})} процентов годовых`],
+        ["Срок займа:", "", "", lastDateStr],
+        ["Метод погашения:", "", "", methodText],
+        ["", "", "", ""],
     ];
 
-    // ── Блок итогов (строки 11-15) ──────────────────────────────────────────
-    const summaryRows = [
-        ["ИТОГИ", ""],
-        ["Общий ОД, тг",        schedule.totalPrincipal()],
-        ["Общие проценты, тг",  schedule.totalInterest()],
-        ["Общая сумма, тг",     schedule.totalPayment()],
-        ["ГЭСВ, %",             gesvValue],
-    ];
-
-    // ── Заголовок таблицы графика ────────────────────────────────────────────
-    const tableHeader = [["#", "Дата платежа", "Сумма платежа", "Вознаграждение", "Основной долг", "Остаток ОД", "Кол-во дней", "Тип"]];
+    // ── Заголовок таблицы ────────────────────────────────────────────────────
+    const tableHeader = [["Дата платежа", "Сумма платежа", "Вознаграждение", "Основной долг"]];
 
     // ── Строки графика ───────────────────────────────────────────────────────
-    const tableRows = schedule.rows.map((row, idx) => {
+    const tableRows = rows.map((row) => {
         const isIssue = row.metadata && row.metadata.kind === "ISSUE";
+        const payment = Number(row.principal||0) + Number(row.interest||0);
         return [
-            idx,
             isoDate(row.paymentDate),
-            isIssue ? "" : row.payment,
-            isIssue ? "" : row.interest,
-            isIssue ? "" : row.principal,
-            row.closingBalance,
-            row.days,
-            row.rowType || ""
+            isIssue ? 0 : payment,
+            isIssue ? 0 : Number(row.interest||0),
+            isIssue ? 0 : Number(row.principal||0)
         ];
     });
 
-    // ── Собираем один лист: параметры → пустая строка → итоги → пустая → таблица
+    // ── Итоговая строка ──────────────────────────────────────────────────────
+    const totalRow = [["Итого:", totalPayment, totalInterest, totalPrincipal]];
+
     const sheetData = [
-        ...paramRows,
-        ["", ""],                   // пустая строка-разделитель
-        ...summaryRows,
-        ["", ""],                   // пустая строка-разделитель
+        ...headerRows,
         ...tableHeader,
-        ...tableRows
+        ...tableRows,
+        ...totalRow
     ];
 
     const ws = XLSX.utils.aoa_to_sheet(sheetData);
-
-    // ── Ширина столбцов ──────────────────────────────────────────────────────
     ws["!cols"] = [
-        { wch: 30 },  // A
-        { wch: 20 },  // B
-        { wch: 18 },  // C
-        { wch: 18 },  // D
-        { wch: 18 },  // E
-        { wch: 18 },  // F
-        { wch: 14 },  // G
-        { wch: 12 },  // H
+        { wch: 44 },
+        { wch: 20 },
+        { wch: 20 },
+        { wch: 30 },
     ];
 
-    // ── Имя файла с датой-временем ───────────────────────────────────────────
     const now  = new Date();
     const ts   = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}_${String(now.getHours()).padStart(2,"0")}${String(now.getMinutes()).padStart(2,"0")}`;
-    const principal = Math.round(num(els.principal.value) / 1000);
-    const filename  = `our_schedule_${principal}k_${ts}.xlsx`;
+    const principalK = Math.round(principal / 1000);
+    const filename  = `schedule_${principalK}k_${ts}.xlsx`;
 
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "График и ГЭСВ");
+    XLSX.utils.book_append_sheet(wb, ws, "График погашения займа");
     XLSX.writeFile(wb, filename);
 }
 
@@ -403,11 +565,19 @@ els.firstPaymentDate.addEventListener("change", () => {
 
 els.exportBtn.addEventListener("click", exportToExcel);
 
+els.recalcBtn.addEventListener("click", () => {
+    recalcGESV();
+    els.recalcBtn.style.display = "none";
+});
+
 els.calcBtn.addEventListener("click", () => {
     els.errorBox.textContent   = "";
     els.scheduleBody.innerHTML = "";
     els.summary.innerHTML      = "";
+    els.recalcBtn.style.display = "none";
+    els.editHint.style.display = "none";
     lastResult = null;
+    manualEdits = {};
 
     try {
         if (!els.manualRows.children.length) {
