@@ -32,13 +32,11 @@
         th { background: #f7f9fb; text-align: center; }
         td.left, th.left { text-align: left; }
         tr.grace-row td { background: #fff8e1; }
-        /* editable cells */
         td.editable { background: #f0f7ff; cursor: text; position: relative; }
         td.editable:hover { background: #dceeff; }
         td.editable input {
             width: 100%; box-sizing: border-box; border: none; outline: 2px solid #1976d2;
-            border-radius: 3px; padding: 2px 4px; font-size: 12px; background: #fff;
-            text-align: right;
+            border-radius: 3px; padding: 2px 4px; font-size: 12px; background: #fff; text-align: right;
         }
         td.editable input[type="date"] { text-align: left; font-size: 11px; padding: 1px 3px; }
         td.edited { background: #fff3cd !important; }
@@ -194,7 +192,6 @@ const els = {
 
 let currentMode = "simple";
 let lastResult  = null;
-// Хранит ручные правки: { rowIndex: { date?, principal?, interest? } }
 let manualEdits = {};
 
 function num(v)        { const n = Number(v); return Number.isFinite(n) ? n : 0; }
@@ -276,7 +273,6 @@ function readGracePeriods() {
     return periods;
 }
 
-// ─── Получить текущие данные строк (с учётом правок) ─────────────────────────
 function getCurrentRows() {
     if (!lastResult) return [];
     return lastResult.schedule.rows.map((row, idx) => {
@@ -289,7 +285,6 @@ function getCurrentRows() {
     });
 }
 
-// ─── Пересчёт ГЭСВ по текущим (возможно отредактированным) строкам ──────────
 function recalcGESV() {
     if (!lastResult) return;
     try {
@@ -298,57 +293,34 @@ function recalcGESV() {
         if (!issueRow) return;
         const issueDate = new Date(issueRow.paymentDate);
         const upfrontFee = num(els.upfrontFee.value);
-
-        // Строим cash-flows вручную
-        const cashFlows = [];
-        // Выдача (отток)
-        cashFlows.push({ date: issueDate, amount: -(num(els.principal.value) - upfrontFee) });
-        // Платежи (притоки)
+        const cashFlows = [{ date: issueDate, amount: -(num(els.principal.value) - upfrontFee) }];
         for (const row of rows) {
             if (row.metadata && row.metadata.kind === "ISSUE") continue;
             const payment = Number(row.principal || 0) + Number(row.interest || 0);
-            if (payment !== 0) {
-                cashFlows.push({ date: new Date(row.paymentDate), amount: payment });
-            }
+            if (payment !== 0) cashFlows.push({ date: new Date(row.paymentDate), amount: payment });
         }
-        if (upfrontFee > 0) {
-            cashFlows.push({ date: issueDate, amount: upfrontFee });
-        }
-
+        if (upfrontFee > 0) cashFlows.push({ date: issueDate, amount: upfrontFee });
         const apr = APRCalculator.calculate(cashFlows, { basisDays: APR.BASIS_DAYS });
-
-        // Пересчитываем итоги
         const totalPrincipal = rows.reduce((s, r) => s + (r.principal || 0), 0);
         const totalInterest  = rows.reduce((s, r) => s + (r.interest  || 0), 0);
         const totalPayment   = totalPrincipal + totalInterest;
-
         renderSummary({ totalPrincipal, totalInterest, totalPayment, rowCount: rows.length }, apr);
-    } catch(e) {
-        console.error("recalcGESV error:", e);
-    }
+    } catch(e) { console.error("recalcGESV error:", e); }
 }
 
-// ─── Сделать ячейку редактируемой ────────────────────────────────────────────
 function makeEditable(td, rowIdx, field, currentValue) {
     td.classList.add("editable");
     td.title = "Нажмите для редактирования";
-
-    td.addEventListener("click", function(e) {
+    td.addEventListener("click", function() {
         if (td.querySelector("input")) return;
         const isDate = field === "date";
         const inp = document.createElement("input");
         inp.type = isDate ? "date" : "number";
-        if (isDate) {
-            inp.value = isoDate(currentValue);
-        } else {
-            inp.value = Number(currentValue).toFixed(2);
-            inp.step = "0.01";
-        }
+        if (isDate) { inp.value = isoDate(currentValue); }
+        else { inp.value = Number(currentValue).toFixed(2); inp.step = "0.01"; }
         td.innerHTML = "";
         td.appendChild(inp);
-        inp.focus();
-        inp.select();
-
+        inp.focus(); inp.select();
         function commit() {
             if (!manualEdits[rowIdx]) manualEdits[rowIdx] = {};
             let val = inp.value;
@@ -357,17 +329,13 @@ function makeEditable(td, rowIdx, field, currentValue) {
             currentValue = val;
             td.innerHTML = isDate ? formatDate(new Date(val)) : fmt(val);
             td.classList.add("edited");
-            // обновляем сумму платежа в той же строке
             updateRowTotal(rowIdx);
-            // показываем кнопку пересчёта
             els.recalcBtn.style.display = "";
         }
         inp.addEventListener("blur", commit);
         inp.addEventListener("keydown", ev => {
-            if (ev.key === "Enter") { commit(); }
-            if (ev.key === "Escape") {
-                td.innerHTML = isDate ? formatDate(new Date(currentValue)) : fmt(currentValue);
-            }
+            if (ev.key === "Enter") commit();
+            if (ev.key === "Escape") td.innerHTML = isDate ? formatDate(new Date(currentValue)) : fmt(currentValue);
         });
     });
 }
@@ -404,15 +372,12 @@ function renderSchedule(result) {
     const { schedule, apr } = result;
     els.scheduleBody.innerHTML = "";
     manualEdits = {};
-
     schedule.rows.forEach((row, idx) => {
         const isIssue = row.metadata && row.metadata.kind === "ISSUE";
         const isGrace = row.rowType === "GRACE";
         const tr = document.createElement("tr");
         tr.dataset.row = idx;
         if (isGrace) tr.classList.add("grace-row");
-
-        // Ячейки
         const tdIdx      = document.createElement("td"); tdIdx.className = "left"; tdIdx.textContent = idx;
         const tdDate     = document.createElement("td"); tdDate.className = "left"; tdDate.textContent = formatDate(row.paymentDate);
         const tdPayment  = document.createElement("td"); tdPayment.className = "payment-cell"; tdPayment.textContent = isIssue ? "—" : fmt(row.payment);
@@ -421,54 +386,42 @@ function renderSchedule(result) {
         const tdBalance  = document.createElement("td"); tdBalance.textContent = fmt(row.closingBalance);
         const tdDays     = document.createElement("td"); tdDays.textContent = row.days;
         const tdType     = document.createElement("td"); tdType.className = "left"; tdType.textContent = row.rowType || "";
-
-        // Редактируемые поля (не для строки выдачи)
         if (!isIssue) {
             makeEditable(tdDate,      idx, "date",      row.paymentDate);
             makeEditable(tdPrincipal, idx, "principal", row.principal);
             makeEditable(tdInterest,  idx, "interest",  row.interest);
         }
-
         tr.append(tdIdx, tdDate, tdPayment, tdInterest, tdPrincipal, tdBalance, tdDays, tdType);
         els.scheduleBody.appendChild(tr);
     });
-
     renderSummary({
         totalPrincipal: schedule.totalPrincipal(),
         totalInterest:  schedule.totalInterest(),
         totalPayment:   schedule.totalPayment(),
         rowCount:       schedule.length
     }, apr);
-
-    // Показываем подсказку
     els.editHint.style.display = "";
 }
 
-// ─── Excel export (формат как в Colvir) ──────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+//  EXCEL EXPORT  —  стилизованный OOXML (рамки, заливка, жирный, формат дат)
+// ═══════════════════════════════════════════════════════════════════════════
 function exportToExcel() {
     if (!lastResult) { alert("Сначала рассчитайте график."); return; }
 
-    const { schedule, apr } = lastResult;
     const rows = getCurrentRows();
+    const { apr } = lastResult;
+    let gesvFinal = (apr && Number.isFinite(apr.annualPercentRate)) ? apr.annualPercentRate : 0;
 
-    const gesvValue = apr && Number.isFinite(apr.annualPercentRate) ? apr.annualPercentRate : 0;
-    // Пересчитываем итоги с учётом правок
-    const totalPrincipal = rows.reduce((s,r) => s + (r.principal||0), 0);
-    const totalInterest  = rows.reduce((s,r) => s + (r.interest||0), 0);
-    const totalPayment   = totalPrincipal + totalInterest;
-    const totalRows      = rows.filter(r => !(r.metadata && r.metadata.kind==="ISSUE")).length + 1;
-
-    // Получаем пересчитанный ГЭСВ если были правки
-    let gesvFinal = gesvValue;
     if (Object.keys(manualEdits).length > 0) {
         try {
-            const issueDate = new Date(rows.find(r => r.metadata && r.metadata.kind==="ISSUE").paymentDate);
+            const issueDate  = new Date(rows.find(r => r.metadata && r.metadata.kind==="ISSUE").paymentDate);
             const upfrontFee = num(els.upfrontFee.value);
-            const cashFlows = [{ date: issueDate, amount: -(num(els.principal.value) - upfrontFee) }];
-            for (const row of rows) {
-                if (row.metadata && row.metadata.kind==="ISSUE") continue;
-                const p = Number(row.principal||0)+Number(row.interest||0);
-                if (p !== 0) cashFlows.push({ date: new Date(row.paymentDate), amount: p });
+            const cashFlows  = [{ date: issueDate, amount: -(num(els.principal.value) - upfrontFee) }];
+            for (const r of rows) {
+                if (r.metadata && r.metadata.kind==="ISSUE") continue;
+                const p = Number(r.principal||0) + Number(r.interest||0);
+                if (p !== 0) cashFlows.push({ date: new Date(r.paymentDate), amount: p });
             }
             if (upfrontFee > 0) cashFlows.push({ date: issueDate, amount: upfrontFee });
             const aprRes = APRCalculator.calculate(cashFlows, { basisDays: APR.BASIS_DAYS });
@@ -476,72 +429,410 @@ function exportToExcel() {
         } catch(e) {}
     }
 
-    const paymentMethodLabel = { ANNUITY: "Аннуитет", EQUAL_PRINCIPAL: "Равные части ОД" };
-    const methodText = paymentMethodLabel[els.paymentMethod.value] || els.paymentMethod.value;
+    const totalPrincipal = rows.reduce((s,r) => s + (r.principal||0), 0);
+    const totalInterest  = rows.reduce((s,r) => s + (r.interest||0),  0);
+    const totalPayment   = totalPrincipal + totalInterest;
 
-    // ── Шапка договора (стиль Colvir) ────────────────────────────────────────
-    const today = new Date();
-    const todayStr = formatDate(today);
+    const principal    = num(els.principal.value);
+    const rate         = num(els.annualRate.value);
     const issueDateStr = formatDate(new Date(els.issueDate.value));
     const lastDateStr  = formatDate(new Date(els.lastPaymentDate.value));
-    const rate = num(els.annualRate.value);
-    const principal = num(els.principal.value);
+    const todayStr     = formatDate(new Date());
+    const methodLabel  = { ANNUITY: "Аннуитет", EQUAL_PRINCIPAL: "Равные части ОД" };
+    const methodText   = methodLabel[els.paymentMethod.value] || els.paymentMethod.value;
+    const gesvStr      = gesvFinal.toLocaleString("ru-RU",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const principalStr = principal.toLocaleString("ru-RU");
 
-    const headerRows = [
-        ["", "", "", "Приложение 1"],
-        ["", "", "", "к Договору банковского займа"],
-        ["", "", "", "от " + issueDateStr],
-        ["", "График погашения займа", "", ""],
-        ["", "от " + todayStr, "", ""],
-        ["Сумма и валюта займа", "", "", `${principal.toLocaleString("ru-RU")} KZT`],
-        ["Размер ставки вознаграждения:", "", "", `${rate} процентов годовых`],
-        ["Размер годовой эффективной ставки вознаграждения:", "", "", `${gesvFinal.toLocaleString("ru-RU", {minimumFractionDigits:2, maximumFractionDigits:2})} процентов годовых`],
-        ["Срок займа:", "", "", lastDateStr],
-        ["Метод погашения:", "", "", methodText],
-        ["", "", "", ""],
+    // ── Дата → число Excel (дней с 1900-01-01, с поправкой на баг Lotus)
+    function dateToExcel(d) {
+        const dt = new Date(d);
+        const epoch = Date.UTC(1899,11,30);
+        return Math.round((dt.getTime() - epoch) / 86400000);
+    }
+
+    // ── XML helpers ─────────────────────────────────────────────────────────
+    function esc(s) {
+        return String(s)
+            .replace(/&/g,"&amp;")
+            .replace(/</g,"&lt;")
+            .replace(/>/g,"&gt;")
+            .replace(/"/g,"&quot;");
+    }
+    // Ячейка: t=тип (s=строка,n=число,d=дата), si=styleIdx, v=значение
+    function cell(col, row, v, si, t) {
+        const ref = `${col}${row}`;
+        if (t === "s") return `<c r="${ref}" s="${si}" t="s"><v>${v}</v></c>`;
+        if (t === "n") return `<c r="${ref}" s="${si}" t="n"><v>${v}</v></c>`;
+        if (t === "d") return `<c r="${ref}" s="${si}" t="n"><v>${dateToExcel(v)}</v></c>`;
+        return `<c r="${ref}" s="${si}"><v></v></c>`;
+    }
+    function cellS(col, row, si, str) {
+        return `<c r="${col}${row}" s="${si}" t="s"><v>${str}</v></c>`;
+    }
+    function cellN(col, row, si, n) {
+        return `<c r="${col}${row}" s="${si}" t="n"><v>${n}</v></c>`;
+    }
+    function cellD(col, row, si, d) {
+        return `<c r="${col}${row}" s="${si}" t="n"><v>${dateToExcel(d)}</v></c>`;
+    }
+    function cellEmpty(col, row, si) {
+        return `<c r="${col}${row}" s="${si}"/>`;
+    }
+
+    // ── Shared strings ──────────────────────────────────────────────────────
+    const strings = [];
+    const ssMap = {};
+    function ss(s) {
+        const k = String(s);
+        if (ssMap[k] === undefined) { ssMap[k] = strings.length; strings.push(k); }
+        return ssMap[k];
+    }
+
+    // ── Стили ───────────────────────────────────────────────────────────────
+    // Индексы стилей (xf):
+    // 0 = обычная ячейка (без рамки)
+    // 1 = шапка: жирный, белый текст, тёмно-синий фон, рамка, выравн.по центру
+    // 2 = данные: рамка, числовой формат #,##0.00
+    // 3 = данные: рамка, дата ДД.ММ.ГГГГ
+    // 4 = данные: рамка, текст, выравн.по левому
+    // 5 = итого: жирный, светло-синий фон, рамка, числовой формат
+    // 6 = итого метка: жирный, светло-синий фон, рамка, текст лево
+    // 7 = метаданные: обычный текст без рамки, лево
+    // 8 = метаданные значение: обычный, право
+    // 9 = заголовок-блок: жирный, большой, без рамки
+
+    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <numFmts count="3">
+    <numFmt numFmtId="164" formatCode="#,##0.00"/>
+    <numFmt numFmtId="165" formatCode="DD.MM.YYYY"/>
+    <numFmt numFmtId="166" formatCode="#,##0.00;[RED]-#,##0.00"/>
+  </numFmts>
+  <fonts count="4">
+    <font><sz val="10"/><name val="Arial"/></font>
+    <font><b/><sz val="10"/><name val="Arial"/><color rgb="FFFFFFFF"/></font>
+    <font><b/><sz val="10"/><name val="Arial"/></font>
+    <font><sz val="10"/><name val="Arial"/></font>
+  </fonts>
+  <fills count="5">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF1F4E79"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFD6E4F0"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/></patternFill></fill>
+  </fills>
+  <borders count="2">
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+    <border>
+      <left style="thin"><color rgb="FF999999"/></left>
+      <right style="thin"><color rgb="FF999999"/></right>
+      <top style="thin"><color rgb="FF999999"/></top>
+      <bottom style="thin"><color rgb="FF999999"/></bottom>
+      <diagonal/>
+    </border>
+  </borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="10">
+    <xf numFmtId="0"   fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0"   fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+    <xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"><alignment horizontal="right"/></xf>
+    <xf numFmtId="165" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"><alignment horizontal="center"/></xf>
+    <xf numFmtId="0"   fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"><alignment horizontal="left"/></xf>
+    <xf numFmtId="164" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyNumberFormat="1"><alignment horizontal="right"/></xf>
+    <xf numFmtId="0"   fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"><alignment horizontal="left"/></xf>
+    <xf numFmtId="0"   fontId="0" fillId="0" borderId="0" xfId="0"><alignment horizontal="left"/></xf>
+    <xf numFmtId="0"   fontId="0" fillId="0" borderId="0" xfId="0"><alignment horizontal="right"/></xf>
+    <xf numFmtId="164" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyNumberFormat="1"><alignment horizontal="right"/></xf>
+  </cellXfs>
+</styleSheet>`;
+
+    // ── Строим worksheet ────────────────────────────────────────────────────
+    const cellRows = [];
+
+    // ─ Шапка (строки 1-10) ─
+    const hdr = [
+        ["Приложение 1",                                              ""],
+        ["к Договору банковского займа",                              ""],
+        ["от " + issueDateStr,                                        ""],
+        ["График погашения займа",                                    ""],
+        ["от " + todayStr,                                           ""],
+        ["Сумма и валюта займа",                  `${principalStr} KZT`],
+        ["Размер ставки вознаграждения:",          `${rate} % годовых`],
+        ["Размер ГЭСВ:",                           `${gesvStr} % годовых`],
+        ["Срок займа:",                             lastDateStr],
+        ["Метод погашения:",                        methodText],
     ];
-
-    // ── Заголовок таблицы ────────────────────────────────────────────────────
-    const tableHeader = [["Дата платежа", "Сумма платежа", "Вознаграждение", "Основной долг"]];
-
-    // ── Строки графика ───────────────────────────────────────────────────────
-    const tableRows = rows.map((row) => {
-        const isIssue = row.metadata && row.metadata.kind === "ISSUE";
-        const payment = Number(row.principal||0) + Number(row.interest||0);
-        return [
-            isoDate(row.paymentDate),
-            isIssue ? 0 : payment,
-            isIssue ? 0 : Number(row.interest||0),
-            isIssue ? 0 : Number(row.principal||0)
-        ];
+    hdr.forEach(([label, val], i) => {
+        const r = i + 1;
+        cellRows.push(
+            `<row r="${r}" ht="16">`+
+            cellS("A",r,7,ss(label))+
+            cellS("D",r,8,ss(val))+
+            `</row>`
+        );
     });
 
-    // ── Итоговая строка ──────────────────────────────────────────────────────
-    const totalRow = [["Итого:", totalPayment, totalInterest, totalPrincipal]];
+    // ─ Пустая строка 11 ─
+    cellRows.push(`<row r="11"/>`);
 
-    const sheetData = [
-        ...headerRows,
-        ...tableHeader,
-        ...tableRows,
-        ...totalRow
-    ];
+    // ─ Заголовок таблицы строка 12 ─
+    const HDR_COLS = ["A","B","C","D"];
+    const HDR_LABELS = ["Дата платежа","Сумма платежа","Вознаграждение","Основной долг"];
+    cellRows.push(
+        `<row r="12" ht="28">`+
+        HDR_COLS.map((c,i)=>cellS(c,12,1,ss(HDR_LABELS[i]))).join("")+
+        `</row>`
+    );
 
-    const ws = XLSX.utils.aoa_to_sheet(sheetData);
-    ws["!cols"] = [
-        { wch: 44 },
-        { wch: 20 },
-        { wch: 20 },
-        { wch: 30 },
-    ];
+    // ─ Строки графика ─
+    rows.forEach((row, idx) => {
+        const r = 13 + idx;
+        const isIssue = row.metadata && row.metadata.kind === "ISSUE";
+        const interest  = Number(row.interest  || 0);
+        const principal = Number(row.principal || 0);
+        const payment   = isIssue ? 0 : (interest + principal);
+        const isGrace   = row.rowType === "GRACE";
+        // Для льготных строк — слегка желтоватая заливка (стиль 9)
+        const numSI  = isGrace ? 9 : 2;  // числовые
+        const dateSI = 3;
 
+        cellRows.push(
+            `<row r="${r}" ht="16">`+
+            cellD("A",r,dateSI, row.paymentDate)+
+            (isIssue ? cellEmpty("B",r,numSI) : cellN("B",r,numSI,payment.toFixed(2)))+
+            (isIssue ? cellEmpty("C",r,numSI) : cellN("C",r,numSI,interest.toFixed(2)))+
+            (isIssue ? cellEmpty("D",r,numSI) : cellN("D",r,numSI,principal.toFixed(2)))+
+            `</row>`
+        );
+    });
+
+    // ─ Итого ─
+    const totalR = 13 + rows.length;
+    cellRows.push(
+        `<row r="${totalR}" ht="18">`+
+        cellS("A",totalR,6,ss("Итого:"))+
+        cellN("B",totalR,5,totalPayment.toFixed(2))+
+        cellN("C",totalR,5,totalInterest.toFixed(2))+
+        cellN("D",totalR,5,totalPrincipal.toFixed(2))+
+        `</row>`
+    );
+
+    const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+           xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheetFormatPr defaultRowHeight="15" customHeight="1"/>
+  <cols>
+    <col min="1" max="1" width="20" customWidth="1"/>
+    <col min="2" max="2" width="18" customWidth="1"/>
+    <col min="3" max="3" width="18" customWidth="1"/>
+    <col min="4" max="4" width="22" customWidth="1"/>
+  </cols>
+  <sheetData>
+    ${cellRows.join("\n    ")}
+  </sheetData>
+</worksheet>`;
+
+    // ── Shared strings XML ──────────────────────────────────────────────────
+    const ssXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strings.length}" uniqueCount="${strings.length}">
+${strings.map(s=>`  <si><t xml:space="preserve">${esc(s)}</t></si>`).join("\n")}
+</sst>`;
+
+    // ── workbook, relationships, content-types ──────────────────────────────
+    const wbXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="График погашения займа" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`;
+
+    const wbRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+
+    const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+
+    const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml"  ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml"             ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml"    ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/sharedStrings.xml"        ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+  <Override PartName="/xl/styles.xml"               ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`;
+
+    // ── Сборка ZIP через SheetJS JSZip-like API ─────────────────────────────
+    // Используем XLSX.utils для сборки ZIP-пакета вручную
+    const zip = new XLSX.utils.book_new ? null : null; // просто загружен
+    // Собираем через нативный подход: создаём файлы как текст и передаём в XLSX.writeFile обёртку
+    // На самом деле — пакуем сами через JSZip, который уже включён в xlsx.full.min.js
+    // XLSX экспортирует внутренний JSZip как XLSX.SSF и XLSX.CFB — используем CFB
+    // Проще: используем XLSX.build напрямую с custom files
+    const wb_obj = {
+        SheetNames: ["График погашения займа"],
+        Sheets: {}
+    };
+    // Fallback: генерируем через SheetJS aoa + применяем стили через прямую запись в zip
+    // ─ Используем встроенный в xlsx CFB/ZIP writer:
+    const encoder = new TextEncoder();
+    function toU8(str) { return encoder.encode(str); }
+
+    // Создаём ZIP вручную через JSZip (доступен как window.JSZip если есть,
+    // или через XLSX внутренний — но надёжнее использовать XLSX.write с типом "array"
+    // и заменить файлы стилей)
+    // ─────────────────────────────────────────────────────────────────────────
+    // ПЛАН Б: строим xlsx через SheetJS aoa, потом патчим стили через замену zip-файлов
+    // SheetJS предоставляет XLSX.CFB для работы с CFB/ZIP
+    // Надёжный способ: использовать XLSX.write с опцией type:"binary" и bookSST:true,
+    // затем через XLSX.CFB.parse пропатчить файлы внутри zip.
+
+    // Создаём базовый WB через aoa для получения корректного zip-каркаса
+    const ws_base = XLSX.utils.aoa_to_sheet([[]]);
+    const wb_base = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb_base, ws_base, "График погашения займа");
+
+    // Генерируем бинарный xlsx как ArrayBuffer
+    const xlsxBuf = XLSX.write(wb_base, { type: "array", bookType: "xlsx", bookSST: false });
+
+    // Парсим как zip через XLSX.CFB
+    // XLSX включает в себя JSZip под именем XLSX.SSF нет — используем встроенный CFB
+    // Лучший путь: использовать JSZip напрямую если он доступен глобально
+    // В xlsx.full.min.js JSZip НЕ экспортируется глобально.
+    // ─ Используем finальный подход: patch через XLSX.CFB ─────────────────
+    try {
+        const cfb = XLSX.CFB.read(new Uint8Array(xlsxBuf), { type: "buffer" });
+        // CFB тут для XLS — для XLSX SheetJS использует zip внутри
+        // Попробуем через XLSX.zip_add_file если есть
+    } catch(e) {}
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ФИНАЛЬНЫЙ ПОДХОД: генерируем полный xlsx zip вручную через
+    // встроенный в браузер Compression Streams API (Chrome 80+, FF 113+)
+    // или через простой DEFLATE-free store zip (несжатый, но валидный)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const files = {
+        "[Content_Types].xml":       contentTypes,
+        "_rels/.rels":               rootRels,
+        "xl/workbook.xml":           wbXml,
+        "xl/_rels/workbook.xml.rels": wbRels,
+        "xl/worksheets/sheet1.xml": sheetXml,
+        "xl/sharedStrings.xml":     ssXml,
+        "xl/styles.xml":            stylesXml,
+    };
+
+    // Сборка несжатого ZIP (STORED)
+    function buildZip(fileMap) {
+        const enc = new TextEncoder();
+        const parts = [];
+        const centralDir = [];
+        let offset = 0;
+
+        function crc32(data) {
+            let crc = 0xFFFFFFFF;
+            const table = crc32.table || (crc32.table = (() => {
+                const t = new Uint32Array(256);
+                for (let i = 0; i < 256; i++) {
+                    let c = i;
+                    for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+                    t[i] = c;
+                }
+                return t;
+            })());
+            for (let i = 0; i < data.length; i++) crc = (crc >>> 8) ^ table[(crc ^ data[i]) & 0xFF];
+            return (crc ^ 0xFFFFFFFF) >>> 0;
+        }
+
+        function u16(n) { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0,n,true); return b; }
+        function u32(n) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0,n,true); return b; }
+
+        for (const [name, content] of Object.entries(fileMap)) {
+            const nameBytes = enc.encode(name);
+            const data      = enc.encode(content);
+            const crc       = crc32(data);
+            const sz        = data.length;
+
+            // Local file header
+            const lfh = new Uint8Array(30 + nameBytes.length);
+            const dv  = new DataView(lfh.buffer);
+            dv.setUint32(0,  0x04034B50, true); // signature
+            dv.setUint16(4,  20,         true); // version needed
+            dv.setUint16(6,  0,          true); // flags
+            dv.setUint16(8,  0,          true); // compression: STORED
+            dv.setUint16(10, 0,          true); // mod time
+            dv.setUint16(12, 0,          true); // mod date
+            dv.setUint32(14, crc,        true);
+            dv.setUint32(18, sz,         true); // compressed size
+            dv.setUint32(22, sz,         true); // uncompressed size
+            dv.setUint16(26, nameBytes.length, true);
+            dv.setUint16(28, 0,          true); // extra length
+            lfh.set(nameBytes, 30);
+
+            parts.push(lfh, data);
+
+            // Central directory entry
+            const cde = new Uint8Array(46 + nameBytes.length);
+            const dvc = new DataView(cde.buffer);
+            dvc.setUint32(0,  0x02014B50, true);
+            dvc.setUint16(4,  20,         true);
+            dvc.setUint16(6,  20,         true);
+            dvc.setUint16(8,  0,          true);
+            dvc.setUint16(10, 0,          true);
+            dvc.setUint16(12, 0,          true);
+            dvc.setUint16(14, 0,          true);
+            dvc.setUint32(16, crc,        true);
+            dvc.setUint32(20, sz,         true);
+            dvc.setUint32(24, sz,         true);
+            dvc.setUint16(28, nameBytes.length, true);
+            dvc.setUint16(30, 0,          true);
+            dvc.setUint16(32, 0,          true);
+            dvc.setUint16(34, 0,          true);
+            dvc.setUint16(36, 0,          true);
+            dvc.setUint32(38, 0,          true);
+            dvc.setUint32(42, offset,     true);
+            cde.set(nameBytes, 46);
+            centralDir.push(cde);
+
+            offset += lfh.length + data.length;
+        }
+
+        const cdSize   = centralDir.reduce((s,b)=>s+b.length,0);
+        const eocd = new Uint8Array(22);
+        const dve  = new DataView(eocd.buffer);
+        dve.setUint32(0,  0x06054B50, true);
+        dve.setUint16(4,  0,          true);
+        dve.setUint16(6,  0,          true);
+        dve.setUint16(8,  centralDir.length, true);
+        dve.setUint16(10, centralDir.length, true);
+        dve.setUint32(12, cdSize,     true);
+        dve.setUint32(16, offset,     true);
+        dve.setUint16(20, 0,          true);
+
+        const all = [...parts, ...centralDir, eocd];
+        const total = all.reduce((s,b)=>s+b.length,0);
+        const out = new Uint8Array(total);
+        let pos = 0;
+        for (const b of all) { out.set(b, pos); pos += b.length; }
+        return out;
+    }
+
+    const zipBytes = buildZip(files);
+    const blob = new Blob([zipBytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
     const now  = new Date();
-    const ts   = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"0")}${String(now.getDate()).padStart(2,"0")}_${String(now.getHours()).padStart(2,"0")}${String(now.getMinutes()).padStart(2,"0")}`;
+    const ts   = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,"00")}${String(now.getDate()).padStart(2,"00")}_${String(now.getHours()).padStart(2,"00")}${String(now.getMinutes()).padStart(2,"00")}`;
     const principalK = Math.round(principal / 1000);
-    const filename  = `schedule_${principalK}k_${ts}.xlsx`;
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "График погашения займа");
-    XLSX.writeFile(wb, filename);
+    a.href     = url;
+    a.download = `schedule_${principalK}k_${ts}.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
 // ─── Listeners ───────────────────────────────────────────────────────────────
@@ -562,13 +853,8 @@ els.term.addEventListener("change", () => { if (currentMode === "manual") buildM
 els.firstPaymentDate.addEventListener("change", () => {
     if (currentMode === "manual" && els.manualRows.children.length) buildManualRows();
 });
-
 els.exportBtn.addEventListener("click", exportToExcel);
-
-els.recalcBtn.addEventListener("click", () => {
-    recalcGESV();
-    els.recalcBtn.style.display = "none";
-});
+els.recalcBtn.addEventListener("click", () => { recalcGESV(); els.recalcBtn.style.display = "none"; });
 
 els.calcBtn.addEventListener("click", () => {
     els.errorBox.textContent   = "";
@@ -578,16 +864,13 @@ els.calcBtn.addEventListener("click", () => {
     els.editHint.style.display = "none";
     lastResult = null;
     manualEdits = {};
-
     try {
         if (!els.manualRows.children.length) {
             currentMode === "simple" ? applySimpleGrace() : buildManualRows();
         }
-
         const gracePeriods = readGracePeriods();
         const upfrontFee   = num(els.upfrontFee.value);
         const issueDate    = new Date(els.issueDate.value);
-
         const loan = new Loan({
             principal:        num(els.principal.value),
             annualRate:       num(els.annualRate.value),
@@ -599,17 +882,13 @@ els.calcBtn.addEventListener("click", () => {
             distributionMode: els.distributionMode.value,
             gracePeriods
         });
-
         const options = upfrontFee > 0
             ? { fees: [{ date: issueDate, amount: upfrontFee, description: "Единоразовая комиссия" }] }
             : {};
-
         const calculator = new LoanCalculator(new KazakhstanBusinessCalendar());
         const result     = calculator.calculate(loan, options);
-
         lastResult = result;
         renderSchedule(result);
-
     } catch (e) {
         console.error("calcBtn error:", e);
         els.errorBox.textContent = e.stack || e.message || String(e);
