@@ -435,7 +435,6 @@ function exportToExcel() {
 
     const principal    = num(els.principal.value);
     const rate         = num(els.annualRate.value);
-    const issueDateStr = formatDate(new Date(els.issueDate.value));
     const lastDateStr  = formatDate(new Date(els.lastPaymentDate.value));
     const todayStr     = formatDate(new Date());
     const methodLabel  = { ANNUITY: "Аннуитет", EQUAL_PRINCIPAL: "Равные части ОД" };
@@ -457,14 +456,6 @@ function exportToExcel() {
             .replace(/</g,"&lt;")
             .replace(/>/g,"&gt;")
             .replace(/"/g,"&quot;");
-    }
-    // Ячейка: t=тип (s=строка,n=число,d=дата), si=styleIdx, v=значение
-    function cell(col, row, v, si, t) {
-        const ref = `${col}${row}`;
-        if (t === "s") return `<c r="${ref}" s="${si}" t="s"><v>${v}</v></c>`;
-        if (t === "n") return `<c r="${ref}" s="${si}" t="n"><v>${v}</v></c>`;
-        if (t === "d") return `<c r="${ref}" s="${si}" t="n"><v>${dateToExcel(v)}</v></c>`;
-        return `<c r="${ref}" s="${si}"><v></v></c>`;
     }
     function cellS(col, row, si, str) {
         return `<c r="${col}${row}" s="${si}" t="s"><v>${str}</v></c>`;
@@ -489,7 +480,6 @@ function exportToExcel() {
     }
 
     // ── Стили ───────────────────────────────────────────────────────────────
-    // Индексы стилей (xf):
     // 0 = обычная ячейка (без рамки)
     // 1 = шапка: жирный, белый текст, тёмно-синий фон, рамка, выравн.по центру
     // 2 = данные: рамка, числовой формат #,##0.00
@@ -499,7 +489,7 @@ function exportToExcel() {
     // 6 = итого метка: жирный, светло-синий фон, рамка, текст лево
     // 7 = метаданные: обычный текст без рамки, лево
     // 8 = метаданные значение: обычный, право
-    // 9 = заголовок-блок: жирный, большой, без рамки
+    // 9 = данные grace: желтоватая заливка, рамка, числовой формат
 
     const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
@@ -549,11 +539,8 @@ function exportToExcel() {
     // ── Строим worksheet ────────────────────────────────────────────────────
     const cellRows = [];
 
-    // ─ Шапка (строки 1-10) ─
+    // ─ Шапка (строки 1-7): убраны «Приложение 1», «к Договору...», «от issueDateStr» ─
     const hdr = [
-        ["Приложение 1",                                              ""],
-        ["к Договору банковского займа",                              ""],
-        ["от " + issueDateStr,                                        ""],
         ["График погашения займа",                                    ""],
         ["от " + todayStr,                                           ""],
         ["Сумма и валюта займа",                  `${principalStr} KZT`],
@@ -572,28 +559,29 @@ function exportToExcel() {
         );
     });
 
-    // ─ Пустая строка 11 ─
-    cellRows.push(`<row r="11"/>`);
+    // ─ Пустая строка 8 ─
+    cellRows.push(`<row r="8"/>`);
 
-    // ─ Заголовок таблицы строка 12 ─
-    const HDR_COLS = ["A","B","C","D"];
-    const HDR_LABELS = ["Дата платежа","Сумма платежа","Вознаграждение","Основной долг"];
+    // ─ Заголовок таблицы строка 9 ─
+    const HDR_COLS   = ["A","B","C","D","E","F"];
+    const HDR_LABELS = ["Дата платежа","Сумма платежа","Вознаграждение","Основной долг","Остаток ОД","Кол-во дней"];
     cellRows.push(
-        `<row r="12" ht="28">`+
-        HDR_COLS.map((c,i)=>cellS(c,12,1,ss(HDR_LABELS[i]))).join("")+
+        `<row r="9" ht="28">`+
+        HDR_COLS.map((c,i)=>cellS(c,9,1,ss(HDR_LABELS[i]))).join("")+
         `</row>`
     );
 
     // ─ Строки графика ─
     rows.forEach((row, idx) => {
-        const r = 13 + idx;
+        const r = 10 + idx;
         const isIssue = row.metadata && row.metadata.kind === "ISSUE";
-        const interest  = Number(row.interest  || 0);
-        const principal = Number(row.principal || 0);
-        const payment   = isIssue ? 0 : (interest + principal);
-        const isGrace   = row.rowType === "GRACE";
-        // Для льготных строк — слегка желтоватая заливка (стиль 9)
-        const numSI  = isGrace ? 9 : 2;  // числовые
+        const interest       = Number(row.interest       || 0);
+        const principal      = Number(row.principal      || 0);
+        const closingBalance = Number(row.closingBalance || 0);
+        const days           = row.days != null ? row.days : "";
+        const payment        = isIssue ? 0 : (interest + principal);
+        const isGrace        = row.rowType === "GRACE";
+        const numSI  = isGrace ? 9 : 2;
         const dateSI = 3;
 
         cellRows.push(
@@ -602,18 +590,22 @@ function exportToExcel() {
             (isIssue ? cellEmpty("B",r,numSI) : cellN("B",r,numSI,payment.toFixed(2)))+
             (isIssue ? cellEmpty("C",r,numSI) : cellN("C",r,numSI,interest.toFixed(2)))+
             (isIssue ? cellEmpty("D",r,numSI) : cellN("D",r,numSI,principal.toFixed(2)))+
+            cellN("E",r,numSI,closingBalance.toFixed(2))+
+            (days !== "" ? cellN("F",r,2,days) : cellEmpty("F",r,2))+
             `</row>`
         );
     });
 
     // ─ Итого ─
-    const totalR = 13 + rows.length;
+    const totalR = 10 + rows.length;
     cellRows.push(
         `<row r="${totalR}" ht="18">`+
         cellS("A",totalR,6,ss("Итого:"))+
         cellN("B",totalR,5,totalPayment.toFixed(2))+
         cellN("C",totalR,5,totalInterest.toFixed(2))+
         cellN("D",totalR,5,totalPrincipal.toFixed(2))+
+        cellEmpty("E",totalR,5)+
+        cellEmpty("F",totalR,5)+
         `</row>`
     );
 
@@ -626,6 +618,8 @@ function exportToExcel() {
     <col min="2" max="2" width="18" customWidth="1"/>
     <col min="3" max="3" width="18" customWidth="1"/>
     <col min="4" max="4" width="22" customWidth="1"/>
+    <col min="5" max="5" width="22" customWidth="1"/>
+    <col min="6" max="6" width="14" customWidth="1"/>
   </cols>
   <sheetData>
     ${cellRows.join("\n    ")}
@@ -667,56 +661,6 @@ ${strings.map(s=>`  <si><t xml:space="preserve">${esc(s)}</t></si>`).join("\n")}
   <Override PartName="/xl/styles.xml"               ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>`;
 
-    // ── Сборка ZIP через SheetJS JSZip-like API ─────────────────────────────
-    // Используем XLSX.utils для сборки ZIP-пакета вручную
-    const zip = new XLSX.utils.book_new ? null : null; // просто загружен
-    // Собираем через нативный подход: создаём файлы как текст и передаём в XLSX.writeFile обёртку
-    // На самом деле — пакуем сами через JSZip, который уже включён в xlsx.full.min.js
-    // XLSX экспортирует внутренний JSZip как XLSX.SSF и XLSX.CFB — используем CFB
-    // Проще: используем XLSX.build напрямую с custom files
-    const wb_obj = {
-        SheetNames: ["График погашения займа"],
-        Sheets: {}
-    };
-    // Fallback: генерируем через SheetJS aoa + применяем стили через прямую запись в zip
-    // ─ Используем встроенный в xlsx CFB/ZIP writer:
-    const encoder = new TextEncoder();
-    function toU8(str) { return encoder.encode(str); }
-
-    // Создаём ZIP вручную через JSZip (доступен как window.JSZip если есть,
-    // или через XLSX внутренний — но надёжнее использовать XLSX.write с типом "array"
-    // и заменить файлы стилей)
-    // ─────────────────────────────────────────────────────────────────────────
-    // ПЛАН Б: строим xlsx через SheetJS aoa, потом патчим стили через замену zip-файлов
-    // SheetJS предоставляет XLSX.CFB для работы с CFB/ZIP
-    // Надёжный способ: использовать XLSX.write с опцией type:"binary" и bookSST:true,
-    // затем через XLSX.CFB.parse пропатчить файлы внутри zip.
-
-    // Создаём базовый WB через aoa для получения корректного zip-каркаса
-    const ws_base = XLSX.utils.aoa_to_sheet([[]]);
-    const wb_base = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb_base, ws_base, "График погашения займа");
-
-    // Генерируем бинарный xlsx как ArrayBuffer
-    const xlsxBuf = XLSX.write(wb_base, { type: "array", bookType: "xlsx", bookSST: false });
-
-    // Парсим как zip через XLSX.CFB
-    // XLSX включает в себя JSZip под именем XLSX.SSF нет — используем встроенный CFB
-    // Лучший путь: использовать JSZip напрямую если он доступен глобально
-    // В xlsx.full.min.js JSZip НЕ экспортируется глобально.
-    // ─ Используем finальный подход: patch через XLSX.CFB ─────────────────
-    try {
-        const cfb = XLSX.CFB.read(new Uint8Array(xlsxBuf), { type: "buffer" });
-        // CFB тут для XLS — для XLSX SheetJS использует zip внутри
-        // Попробуем через XLSX.zip_add_file если есть
-    } catch(e) {}
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // ФИНАЛЬНЫЙ ПОДХОД: генерируем полный xlsx zip вручную через
-    // встроенный в браузер Compression Streams API (Chrome 80+, FF 113+)
-    // или через простой DEFLATE-free store zip (несжатый, но валидный)
-    // ─────────────────────────────────────────────────────────────────────────
-
     const files = {
         "[Content_Types].xml":       contentTypes,
         "_rels/.rels":               rootRels,
@@ -749,34 +693,28 @@ ${strings.map(s=>`  <si><t xml:space="preserve">${esc(s)}</t></si>`).join("\n")}
             return (crc ^ 0xFFFFFFFF) >>> 0;
         }
 
-        function u16(n) { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0,n,true); return b; }
-        function u32(n) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0,n,true); return b; }
-
         for (const [name, content] of Object.entries(fileMap)) {
             const nameBytes = enc.encode(name);
             const data      = enc.encode(content);
             const crc       = crc32(data);
             const sz        = data.length;
 
-            // Local file header
             const lfh = new Uint8Array(30 + nameBytes.length);
             const dv  = new DataView(lfh.buffer);
-            dv.setUint32(0,  0x04034B50, true); // signature
-            dv.setUint16(4,  20,         true); // version needed
-            dv.setUint16(6,  0,          true); // flags
-            dv.setUint16(8,  0,          true); // compression: STORED
-            dv.setUint16(10, 0,          true); // mod time
-            dv.setUint16(12, 0,          true); // mod date
+            dv.setUint32(0,  0x04034B50, true);
+            dv.setUint16(4,  20,         true);
+            dv.setUint16(6,  0,          true);
+            dv.setUint16(8,  0,          true);
+            dv.setUint16(10, 0,          true);
+            dv.setUint16(12, 0,          true);
             dv.setUint32(14, crc,        true);
-            dv.setUint32(18, sz,         true); // compressed size
-            dv.setUint32(22, sz,         true); // uncompressed size
+            dv.setUint32(18, sz,         true);
+            dv.setUint32(22, sz,         true);
             dv.setUint16(26, nameBytes.length, true);
-            dv.setUint16(28, 0,          true); // extra length
+            dv.setUint16(28, 0,          true);
             lfh.set(nameBytes, 30);
-
             parts.push(lfh, data);
 
-            // Central directory entry
             const cde = new Uint8Array(46 + nameBytes.length);
             const dvc = new DataView(cde.buffer);
             dvc.setUint32(0,  0x02014B50, true);
@@ -802,7 +740,7 @@ ${strings.map(s=>`  <si><t xml:space="preserve">${esc(s)}</t></si>`).join("\n")}
             offset += lfh.length + data.length;
         }
 
-        const cdSize   = centralDir.reduce((s,b)=>s+b.length,0);
+        const cdSize = centralDir.reduce((s,b)=>s+b.length,0);
         const eocd = new Uint8Array(22);
         const dve  = new DataView(eocd.buffer);
         dve.setUint32(0,  0x06054B50, true);
