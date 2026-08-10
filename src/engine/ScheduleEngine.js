@@ -1,7 +1,7 @@
 /**
  * ==========================================================
  * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev4
+ * Version: 4.0-dev5
  *
  * ScheduleEngine.js
  *
@@ -74,14 +74,15 @@ export default class ScheduleEngine {
         // (сбрасывается при каждой новой серии odGrace)
         let firstPaymentAfterOdGraceHandled = false;
 
-        // Последний известный «конец серии» odGrace — для отслеживания новых серий
+        // Последний известный «конец серии» odGrace — для отслеживания новых серий.
+        // Хранит СТАРОЕ значение до обновления при isFirstNormalAfterNewOdGrace,
+        // чтобы _calculateSkippedPrincipalSince получил правильный fromPeriod.
         let lastKnownOdGraceEndPeriod = -1;
 
         // АННУИТЕТ: PMT считается до цикла для первой серии grace (или без grace)
         let annuityBasePayment = 0;
 
-        // Построить массив дат один раз — используется и для первичного расчёта PMT,
-        // и для пересчёта при новых сериях grace внутри цикла.
+        // Построить массив дат один раз
         const allPaymentDates = _buildPaymentDates(loan, this.calendar, totalPeriods);
 
         if (isAnnuity) {
@@ -143,13 +144,15 @@ export default class ScheduleEngine {
 
             // ═══════════════════════════════════════════════════════════
             // Обнаружение НАЧАЛА нормального периода после odGrace-серии
-            // Используется для сброса флагов и пересчёта PMT/доли ОД
-            // при несмежных grace-периодах.
             // ═══════════════════════════════════════════════════════════
             const isFirstNormalAfterNewOdGrace = (
                 !inGrace &&
                 _hadNewOdGraceSince(loan, lastKnownOdGraceEndPeriod + 1, period - 1)
             );
+
+            // Сохраняем СТАРЫЙ конец grace ДО обновления —
+            // нужен для _calculateSkippedPrincipalSince
+            const prevOdGraceEndPeriod = lastKnownOdGraceEndPeriod;
 
             if (isFirstNormalAfterNewOdGrace) {
                 // Зафиксировать новый конец odGrace-серии
@@ -162,7 +165,7 @@ export default class ScheduleEngine {
                         loan.annualRate,
                         allPaymentDates,
                         loan.gracePeriods,
-                        period              // startPeriod: пересчёт начиная с текущего
+                        period   // startPeriod: пересчёт начиная с текущего периода
                     );
                 }
 
@@ -219,19 +222,15 @@ export default class ScheduleEngine {
             } else {
 
                 if (afterGraceEqualPrincipal !== null) {
+                    // ALL_NEXT: уже пересчитанная доля после grace
                     principal = period === totalPeriods
                         ? openingBalance
                         : Money.round(afterGraceEqualPrincipal);
 
-                } else if (hasAnyGrace) {
-                    const normalCount = _countNormalPeriods(loan);
-                    principal = period === totalPeriods
-                        ? openingBalance
-                        : (normalCount > 0
-                            ? Money.round(loan.principal / normalCount)
-                            : openingBalance);
-
                 } else {
+                    // FIRST_PAYMENT или ещё не было grace:
+                    // базовая доля = loan.principal / loan.term (стандартная)
+                    // накопленный пропущенный ОД добавится в БЛОКЕ 4
                     principal = period === totalPeriods
                         ? openingBalance
                         : Money.round(loan.principal / totalPeriods);
@@ -266,7 +265,6 @@ export default class ScheduleEngine {
                         deferredInterest = 0;
 
                     } else if (distributionMode === DistributionMode.ALL_NEXT_PAYMENTS) {
-                        // Считаем только нормальные периоды от текущего до конца
                         const remainingNormal = _countRemainingNormalPeriods(loan, period);
                         const share = period === totalPeriods
                             ? deferredInterest
@@ -299,7 +297,8 @@ export default class ScheduleEngine {
                 }
 
                 // EQUAL_PRINCIPAL + FIRST_PAYMENT: добавить пропущенный ОД
-                // (firstPaymentAfterOdGraceHandled сбрасывается при каждой новой серии)
+                // Используем prevOdGraceEndPeriod (СТАРЫЙ конец), а не обновлённый,
+                // чтобы fromPeriod = prevOdGraceEndPeriod + 1 охватил текущую серию grace.
                 if (
                     !isAnnuity &&
                     distributionMode === DistributionMode.FIRST_PAYMENT &&
@@ -311,7 +310,7 @@ export default class ScheduleEngine {
                     if (hadOdGrace) {
                         const skipped = _calculateSkippedPrincipalSince(
                             loan,
-                            lastKnownOdGraceEndPeriod,
+                            prevOdGraceEndPeriod,  // ← СТАРЫЙ конец (до обновления)
                             period - 1
                         );
                         if (skipped > 0) {
@@ -390,7 +389,6 @@ function _buildPaymentDates(loan, calendar, totalPeriods) {
 
 /**
  * Проверить: были ли odGrace-периоды в диапазоне [fromPeriod, toPeriod].
- * Используется для обнаружения новой серии odGrace.
  */
 function _hadNewOdGraceSince(loan, fromPeriod, toPeriod) {
     if (!loan.gracePeriods || fromPeriod > toPeriod) return false;
@@ -419,9 +417,10 @@ function _findOdGraceEndBefore(loan, fromPeriod) {
 }
 
 /**
- * Подсчитать пропущенный ОД в odGrace-периодах в диапазоне [fromPeriod, toPeriod].
+ * Подсчитать пропущенный ОД в odGrace-периодах в диапазоне (lastEndPeriod, toPeriod].
  * Только для EQUAL_PRINCIPAL + FIRST_PAYMENT.
- * fromPeriod — начало текущей серии odGrace (lastKnownOdGraceEndPeriod + 1).
+ * lastEndPeriod — СТАРЫЙ конец предыдущей серии (до текущей).
+ * fromPeriod = lastEndPeriod + 1 — начало текущей серии grace.
  */
 function _calculateSkippedPrincipalSince(loan, lastEndPeriod, toPeriod) {
     if (loan.paymentMethod !== PaymentMethod.EQUAL_PRINCIPAL) return 0;
@@ -461,8 +460,6 @@ function _countNormalPeriods(loan) {
 
 /**
  * Подсчитать кол-во НОРМАЛЬНЫХ (не-odGrace) периодов начиная с fromPeriod.
- * Используется для: ALL_NEXT_PAYMENTS распределения deferredInterest и
- * пересчёта базовой доли ОД для EQUAL_PRINCIPAL.
  */
 function _countRemainingNormalPeriods(loan, fromPeriod) {
     let count = 0;
