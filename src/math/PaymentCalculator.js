@@ -20,18 +20,10 @@ export default class PaymentCalculator {
      * Методология Colvir: PMT рассчитывается через дисконтирование
      * по конвенции 30/360 с фактическими датами платежей.
      *
-     * Каждый платёж дисконтируется по накопленному произведению
-     * периодных ставок: r_i = annualRate/100/360 * days30_360(prevDate, paymentDate)
-     *
-     * PV = sum( PMT / prod(1 + r_i) ) = principal  => решаем относительно PMT.
-     *
-     * Если даты не переданы — используется стандартная формула rate/12.
-     *
      * @param {number}   principal
      * @param {number}   annualRate  — % годовых (21, не 0.21)
      * @param {number}   periods     — количество периодов
      * @param {Date[]}   [dates]     — массив дат [issueDate, pay1, pay2, ..., payN]
-     *                                 длина должна быть periods + 1
      * @returns {number}
      */
     static calculateAnnuity(
@@ -45,18 +37,14 @@ export default class PaymentCalculator {
             return Money.round(principal / periods);
         }
 
-        // С датами: 30/360 дисконтирование (основной путь)
         if (dates && dates.length === periods + 1) {
-
             return PaymentCalculator._calculateAnnuityBy30_360(
                 principal,
                 annualRate,
                 dates
             );
-
         }
 
-        // Без дат: стандартная формула (fallback)
         const monthlyRate = annualRate / 100 / 12;
         const factor = Math.pow(1 + monthlyRate, periods);
         const payment = principal * monthlyRate * factor / (factor - 1);
@@ -65,68 +53,60 @@ export default class PaymentCalculator {
     }
 
     /**
-     * Аннуитетный PMT с учётом льготного периода (odGrace).
+     * Аннуитетный PMT с учётом отсрочного периода (odGrace).
      *
-     * Алгоритм Colvir (реверс-инжиниринг по XLS-графикам):
+     * Алгоритм Colvir: дата окончания отсрочки — «виртуальная дата выдачи»:
+     *   PMT = _calculateAnnuityBy30_360(
+     *             principal,
+     *             rate,
+     *             [graceEndDate, P(grace+1), ..., P(N)]
+     *         )
      *
-     *   Colvir НЕ дисконтирует льготные платежи к дате выдачи.
-     *   Вместо этого он рассматривает дату конца отсрочки как
-     *   «виртуальную дату выдачи» и считает обычный аннуитет
-     *   для оставшихся нормальных периодов:
-     *
-     *     PMT = _calculateAnnuityBy30_360(
-     *               principal,
-     *               rate,
-     *               [graceEndDate, P(grace+1), ..., P(N)]
-     *           )
-     *
-     *   Это даёт точное совпадение с Colvir (например, 1 132 484.97
-     *   для: 37.5M, 23%, 59 мес., grace 1-6).
-     *
-     * Предполагается что все grace-периоды идут подряд в начале.
-     * Если grace-периоды не в начале или несмежные — метод корректно
-     * обрабатывает только contiguous grace в начале (стандартный случай Colvir).
-     *
-     * @param {number}   principal    — сумма кредита
-     * @param {number}   annualRate   — % годовых (23, не 0.23)
-     * @param {Date[]}   dates        — [issueDate, pay1, ..., payN], длина N+1
-     * @param {Object[]} gracePeriods — массив GracePeriod (с .includes(p), .odGrace)
+     * @param {number}   principal    — текущий баланс или сумма кредита
+     * @param {number}   annualRate   — % годовых
+     * @param {Date[]}   allDates     — полный массив [issueDate, pay1, ..., payN]
+     * @param {Object[]} gracePeriods — массив GracePeriod
+     * @param {number}   [startPeriod=1] — номер периода, с которого начинается
+     *                                 пересчёт PMT (для несмежных grace).
+     *                                 При startPeriod=1 поведение как раньше.
      * @returns {number}
      */
     static calculateAnnuityWithGrace(
         principal,
         annualRate,
-        dates,
-        gracePeriods
+        allDates,
+        gracePeriods,
+        startPeriod = 1
     ) {
 
-        const totalPeriods = dates.length - 1;
+        const totalPeriods = allDates.length - 1;
 
         if (annualRate === 0) {
             const normalCount = Array.from(
-                { length: totalPeriods },
-                (_, i) => i + 1
+                { length: totalPeriods - startPeriod + 1 },
+                (_, i) => i + startPeriod
             ).filter(
                 p => !gracePeriods.some(g => g && g.includes && g.includes(p))
             ).length;
             return Money.round(principal / (normalCount || 1));
         }
 
-        // Найти последний grace-период с odGrace
-        let graceEndIdx = 0;
-        for (let i = 1; i <= totalPeriods; i++) {
+        // Найти последний odGrace-период среди периодов [startPeriod..N]
+        let graceEndIdx = startPeriod - 1; // индекс в allDates
+        for (let i = startPeriod; i <= totalPeriods; i++) {
             const inOdGrace = gracePeriods.some(
                 g => g && g.odGrace && typeof g.includes === "function" && g.includes(i)
             );
             if (inOdGrace) {
                 graceEndIdx = i;
+            } else {
+                // При несмежных grace останавливаемся на первой нормальной группе
+                break;
             }
         }
 
-        // Срез дат от конца grace до конца кредита:
-        // [dates[graceEndIdx], dates[graceEndIdx+1], ..., dates[N]]
-        // = (N - graceEndIdx + 1) элементов → (N - graceEndIdx) периодов
-        const subDates = dates.slice(graceEndIdx);
+        // Срез дат от конца grace-серии до конца графика
+        const subDates = allDates.slice(graceEndIdx);
 
         return PaymentCalculator._calculateAnnuityBy30_360(
             principal,
@@ -138,10 +118,6 @@ export default class PaymentCalculator {
 
     /**
      * PMT через аналитическое дисконтирование 30/360.
-     *
-     * dailyRate = annualRate / 100 / 360
-     * cumulativeFactor_i = prod_{j=1}^{i} (1 + dailyRate * days30_360_j)
-     * PMT = principal / sum(1 / cumulativeFactor_i)
      *
      * @private
      */
@@ -167,10 +143,6 @@ export default class PaymentCalculator {
 
     /**
      * Погашение равными долями.
-     *
-     * @param {number} principal
-     * @param {number} periods
-     * @returns {number}
      */
     static calculateEqualPrincipal(
         principal,
