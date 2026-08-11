@@ -5,24 +5,28 @@
  *
  * ScheduleEngine.js
  *
- * Матрица поведения при отсрочке (аннуитет):
+ * Матрица поведения при отсрочке:
  *
- * 1. odGrace=true  (отсрочка ОД):
+ * 1. odGrace=true (отсрочка ОД):
  *    Льготный период: principal=0, interest начисляется и платится.
- *    После: PMT пересчитывается при каждой новой серии odGrace через
- *    calculateAnnuityWithGrace() — срез дат начиная с конца текущей серии.
+ *    После:
+ *      FIRST_PAYMENT     — весь пропущенный ОД добавляется к первому
+ *                          нормальному платежу одной суммой поверх PMT/доли.
+ *      ALL_NEXT_PAYMENTS — аннуитет: PMT пересчитывается от текущего баланса
+ *                          (пропущенный ОД размазывается по оставшимся периодам).
+ *                          Равные доли: доля пересчитывается от текущего баланса.
  *
  * 2. percentGrace=true (отсрочка процентов):
  *    Льготный период: PMT целиком идёт в ОД, interest=0 (накапливается).
- *    Баланс снижается быстрее. Накопленные проценты распределяются
- *    по distributionMode.
+ *    Накопленные проценты распределяются по distributionMode.
  *
  * 3. odGrace + percentGrace (полная отсрочка):
  *    Льготный период: principal=0, interest=0, payment=0.
  *    Накопленные проценты распределяются по distributionMode.
  *
  * distributionMode:
- *   FIRST_PAYMENT    — накопленные % добавляются к первому платежу после льготы.
+ *   FIRST_PAYMENT     — накопленные % / пропущенный ОД добавляются к первому
+ *                       платежу после льготы.
  *   ALL_NEXT_PAYMENTS — равномерно по всем оставшимся НОРМАЛЬНЫМ периодам.
  * ==========================================================
  */
@@ -68,21 +72,19 @@ export default class ScheduleEngine {
         let prevDate         = DateUtils.clone(loan.issueDate);
         let deferredInterest = 0;
 
-        // Для EQUAL_PRINCIPAL: равная часть ОД после отсрочки (ALL_NEXT)
-        let afterGraceEqualPrincipal = null;
-        // Для EQUAL_PRINCIPAL + FIRST_PAYMENT: признак что первый платёж уже увеличен
-        // (сбрасывается при каждой новой серии odGrace)
-        let firstPaymentAfterOdGraceHandled = false;
+        // Пропущенный ОД за odGrace-серию (для FIRST_PAYMENT, оба метода погашения).
+        // Накапливается в odGrace-периодах, сбрасывается в первом нормальном.
+        let deferredPrincipal = 0;
 
-        // Последний известный «конец серии» odGrace — для отслеживания новых серий.
-        // Хранит СТАРОЕ значение до обновления при isFirstNormalAfterNewOdGrace,
-        // чтобы _calculateSkippedPrincipalSince получил правильный fromPeriod.
+        // Для EQUAL_PRINCIPAL + ALL_NEXT: пересчитанная доля после grace
+        let afterGraceEqualPrincipal = null;
+
+        // Последний известный «конец серии» odGrace — для отслеживания новых серий
         let lastKnownOdGraceEndPeriod = -1;
 
-        // АННУИТЕТ: PMT считается до цикла для первой серии grace (или без grace)
+        // АННУИТЕТ: базовый PMT (пересчитывается при ALL_NEXT после каждой серии)
         let annuityBasePayment = 0;
 
-        // Построить массив дат один раз
         const allPaymentDates = _buildPaymentDates(loan, this.calendar, totalPeriods);
 
         if (isAnnuity) {
@@ -106,8 +108,6 @@ export default class ScheduleEngine {
             }
         }
 
-        const hasAnyGrace = loan.gracePeriods && loan.gracePeriods.length > 0;
-
         for (let period = 1; period <= totalPeriods; period++) {
 
             // Дата платежа
@@ -125,11 +125,10 @@ export default class ScheduleEngine {
                 ? this.calendar.adjustPaymentDate(plannedDate)
                 : plannedDate;
 
-            const actDays      = PeriodCalculator.calculate(prevDate, paymentDate).days;
-            const annuityDays  = DateUtils.days30_360(prevDate, paymentDate);
+            const actDays        = PeriodCalculator.calculate(prevDate, paymentDate).days;
+            const annuityDays    = DateUtils.days30_360(prevDate, paymentDate);
             const openingBalance = Money.round(balance);
 
-            // Отсрочка для этого периода
             const grace = loan.gracePeriods
                 ? loan.gracePeriods.find(
                     g => g && typeof g.includes === "function" && g.includes(period)
@@ -140,47 +139,39 @@ export default class ScheduleEngine {
             const odGrace      = inGrace && grace.odGrace;
             const percentGrace = inGrace && grace.percentGrace;
 
-            let rowType = inGrace ? RowType.GRACE : RowType.NORMAL;
+            const rowType = inGrace ? RowType.GRACE : RowType.NORMAL;
 
             // ═══════════════════════════════════════════════════════════
-            // Обнаружение НАЧАЛА нормального периода после odGrace-серии
+            // Обнаружение первого нормального периода после odGrace-серии
             // ═══════════════════════════════════════════════════════════
             const isFirstNormalAfterNewOdGrace = (
                 !inGrace &&
                 _hadNewOdGraceSince(loan, lastKnownOdGraceEndPeriod + 1, period - 1)
             );
 
-            // Сохраняем СТАРЫЙ конец grace ДО обновления —
-            // нужен для _calculateSkippedPrincipalSince
-            const prevOdGraceEndPeriod = lastKnownOdGraceEndPeriod;
-
             if (isFirstNormalAfterNewOdGrace) {
-                // Зафиксировать новый конец odGrace-серии
                 lastKnownOdGraceEndPeriod = _findOdGraceEndBefore(loan, period);
 
-                // АННУИТЕТ: пересчитать PMT от конца новой серии odGrace
-                if (isAnnuity) {
+                // АННУИТЕТ + ALL_NEXT: пересчитать PMT от текущего баланса
+                // АННУИТЕТ + FIRST_PAYMENT: PMT не пересчитывается —
+                //   пропущенный ОД уже накоплен в deferredPrincipal и будет
+                //   добавлен одним куском в БЛОКЕ 4.
+                if (isAnnuity && distributionMode === DistributionMode.ALL_NEXT_PAYMENTS) {
                     annuityBasePayment = PaymentCalculator.calculateAnnuityWithGrace(
                         balance,
                         loan.annualRate,
                         allPaymentDates,
                         loan.gracePeriods,
-                        period   // startPeriod: пересчёт начиная с текущего периода
+                        period
                     );
                 }
 
-                // EQUAL_PRINCIPAL + ALL_NEXT: сбросить кэш, чтобы пересчитать долю
+                // EQUAL_PRINCIPAL + ALL_NEXT: сбросить кэш для пересчёта доли
                 if (!isAnnuity && distributionMode === DistributionMode.ALL_NEXT_PAYMENTS) {
                     afterGraceEqualPrincipal = null;
                 }
-
-                // EQUAL_PRINCIPAL + FIRST_PAYMENT: сбросить флаг для новой серии
-                if (!isAnnuity && distributionMode === DistributionMode.FIRST_PAYMENT) {
-                    firstPaymentAfterOdGraceHandled = false;
-                }
             }
 
-            // Дни для процентов: аннуитет → 30/360, равные доли → Act/Act
             const interestDays = isAnnuity ? annuityDays : actDays;
 
             let interest = Money.round(
@@ -222,15 +213,12 @@ export default class ScheduleEngine {
             } else {
 
                 if (afterGraceEqualPrincipal !== null) {
-                    // ALL_NEXT: уже пересчитанная доля после grace
                     principal = period === totalPeriods
                         ? openingBalance
                         : Money.round(afterGraceEqualPrincipal);
 
                 } else {
-                    // FIRST_PAYMENT или ещё не было grace:
-                    // базовая доля = loan.principal / loan.term (стандартная)
-                    // накопленный пропущенный ОД добавится в БЛОКЕ 4
+                    // Базовая доля; накопленный пропущенный ОД добавится в БЛОКЕ 4
                     principal = period === totalPeriods
                         ? openingBalance
                         : Money.round(loan.principal / totalPeriods);
@@ -244,6 +232,18 @@ export default class ScheduleEngine {
             if (inGrace) {
 
                 if (odGrace) {
+                    // Накапливаем пропущенный ОД для FIRST_PAYMENT
+                    if (distributionMode === DistributionMode.FIRST_PAYMENT) {
+                        let contrib;
+                        if (isAnnuity) {
+                            // ОД который был бы в этом периоде = PMT - interest
+                            contrib = Money.round(annuityBasePayment - interest);
+                            if (contrib < 0) contrib = 0;
+                        } else {
+                            contrib = Money.round(loan.principal / totalPeriods);
+                        }
+                        deferredPrincipal = Money.add(deferredPrincipal, contrib);
+                    }
                     principal = 0;
                 }
 
@@ -275,8 +275,13 @@ export default class ScheduleEngine {
 
                 }
 
-                // EQUAL_PRINCIPAL + ALL_NEXT: пересчёт доли ОД при первом нормальном
-                // после odGrace (afterGraceEqualPrincipal сброшен выше при новой серии)
+                // Распределение deferredPrincipal (FIRST_PAYMENT, оба метода)
+                if (deferredPrincipal > 0 && distributionMode === DistributionMode.FIRST_PAYMENT) {
+                    principal = Money.add(principal, deferredPrincipal);
+                    deferredPrincipal = 0;
+                }
+
+                // EQUAL_PRINCIPAL + ALL_NEXT: пересчёт доли при первом нормальном
                 if (
                     !isAnnuity &&
                     distributionMode === DistributionMode.ALL_NEXT_PAYMENTS &&
@@ -293,30 +298,6 @@ export default class ScheduleEngine {
                         principal = period === totalPeriods
                             ? openingBalance
                             : Money.round(afterGraceEqualPrincipal);
-                    }
-                }
-
-                // EQUAL_PRINCIPAL + FIRST_PAYMENT: добавить пропущенный ОД
-                // Используем prevOdGraceEndPeriod (СТАРЫЙ конец), а не обновлённый,
-                // чтобы fromPeriod = prevOdGraceEndPeriod + 1 охватил текущую серию grace.
-                if (
-                    !isAnnuity &&
-                    distributionMode === DistributionMode.FIRST_PAYMENT &&
-                    !firstPaymentAfterOdGraceHandled
-                ) {
-                    const hadOdGrace = loan.gracePeriods.some(
-                        g => g && g.odGrace && g.endPeriod < period
-                    );
-                    if (hadOdGrace) {
-                        const skipped = _calculateSkippedPrincipalSince(
-                            loan,
-                            prevOdGraceEndPeriod,  // ← СТАРЫЙ конец (до обновления)
-                            period - 1
-                        );
-                        if (skipped > 0) {
-                            principal = Money.add(principal, skipped);
-                        }
-                        firstPaymentAfterOdGraceHandled = true;
                     }
                 }
 
@@ -349,9 +330,10 @@ export default class ScheduleEngine {
                     distributionMode,
                     plannedDate,
                     adjustedDate:     paymentDate,
-                    annuityBasePayment:   isAnnuity ? annuityBasePayment : null,
-                    annuityDays30_360:    isAnnuity ? annuityDays       : null,
-                    deferredInterestLeft: deferredInterest
+                    annuityBasePayment:    isAnnuity ? annuityBasePayment : null,
+                    annuityDays30_360:     isAnnuity ? annuityDays       : null,
+                    deferredPrincipalLeft: deferredPrincipal,
+                    deferredInterestLeft:  deferredInterest
                 }
             }));
 
@@ -417,48 +399,6 @@ function _findOdGraceEndBefore(loan, fromPeriod) {
 }
 
 /**
- * Подсчитать пропущенный ОД в odGrace-периодах в диапазоне (lastEndPeriod, toPeriod].
- * Только для EQUAL_PRINCIPAL + FIRST_PAYMENT.
- * lastEndPeriod — СТАРЫЙ конец предыдущей серии (до текущей).
- * fromPeriod = lastEndPeriod + 1 — начало текущей серии grace.
- */
-function _calculateSkippedPrincipalSince(loan, lastEndPeriod, toPeriod) {
-    if (loan.paymentMethod !== PaymentMethod.EQUAL_PRINCIPAL) return 0;
-
-    const regularPrincipal = Money.round(loan.principal / loan.term);
-    let skipped = 0;
-    const fromPeriod = lastEndPeriod + 1;
-
-    for (let p = fromPeriod; p <= toPeriod; p++) {
-        const grace = loan.gracePeriods.find(
-            g => g && typeof g.includes === "function" && g.includes(p)
-        );
-        if (grace && grace.odGrace) {
-            skipped = Money.add(skipped, regularPrincipal);
-        }
-    }
-
-    return skipped;
-}
-
-/**
- * Подсчитать общее кол-во НОРМАЛЬНЫХ (не-odGrace) периодов в графике.
- */
-function _countNormalPeriods(loan) {
-    let count = 0;
-    for (let p = 1; p <= loan.term; p++) {
-        const grace = loan.gracePeriods
-            ? loan.gracePeriods.find(
-                g => g && typeof g.includes === "function" && g.includes(p)
-              )
-            : undefined;
-        const isOdGrace = grace && grace.odGrace;
-        if (!isOdGrace) count++;
-    }
-    return count || loan.term;
-}
-
-/**
  * Подсчитать кол-во НОРМАЛЬНЫХ (не-odGrace) периодов начиная с fromPeriod.
  */
 function _countRemainingNormalPeriods(loan, fromPeriod) {
@@ -469,8 +409,7 @@ function _countRemainingNormalPeriods(loan, fromPeriod) {
                 g => g && typeof g.includes === "function" && g.includes(p)
               )
             : undefined;
-        const isOdGrace = grace && grace.odGrace;
-        if (!isOdGrace) count++;
+        if (!(grace && grace.odGrace)) count++;
     }
     return count || 1;
 }
