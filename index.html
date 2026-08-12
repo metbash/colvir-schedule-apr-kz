@@ -326,15 +326,6 @@ td.edited { background: #fff3cd !important; }
 const __HOLIDAYS_DATA__ = {"colvir":{"fixed":[{"month":1,"day":1,"name":"Новый год"},{"month":1,"day":2,"name":"Новый год"},{"month":3,"day":8,"name":"Международный женский день"},{"month":3,"day":21,"name":"Наурыз мейрамы"},{"month":3,"day":22,"name":"Наурыз мейрамы"},{"month":3,"day":23,"name":"Наурыз мейрамы"},{"month":5,"day":1,"name":"Праздник единства народа Казахстана"},{"month":5,"day":7,"name":"День защитника Отечества"},{"month":5,"day":9,"name":"День Победы"},{"month":7,"day":6,"name":"День столицы"},{"month":8,"day":30,"name":"День Конституции Республики Казахстан"},{"month":12,"day":1,"name":"День Первого Президента"},{"month":12,"day":16,"name":"День Независимости"},{"month":12,"day":17,"name":"День Независимости"}]},"actual":{"2026":{"holidays":[{"date":"2026-01-01","name":"Новый год"},{"date":"2026-01-02","name":"Новый год"},{"date":"2026-03-08","name":"Международный женский день"},{"date":"2026-03-21","name":"Наурыз мейрамы"},{"date":"2026-03-22","name":"Наурыз мейрамы"},{"date":"2026-03-23","name":"Наурыз мейрамы"},{"date":"2026-05-01","name":"Праздник единства народа Казахстана"},{"date":"2026-05-07","name":"День защитника Отечества"},{"date":"2026-05-09","name":"День Победы"},{"date":"2026-07-06","name":"День столицы"},{"date":"2026-08-30","name":"День Конституции Республики Казахстан"},{"date":"2026-12-01","name":"День Первого Президента"},{"date":"2026-12-16","name":"День Независимости"},{"date":"2026-12-17","name":"День Независимости"}],"transfers":[]},"2025":{"holidays":[{"date":"2025-01-01","name":"Новый год"},{"date":"2025-01-02","name":"Новый год"},{"date":"2025-03-08","name":"Международный женский день"},{"date":"2025-03-21","name":"Наурыз мейрамы"},{"date":"2025-03-22","name":"Наурыз мейрамы"},{"date":"2025-03-23","name":"Наурыз мейрамы"},{"date":"2025-03-24","name":"Наурыз мейрамы (перенос с 22.03)"},{"date":"2025-05-01","name":"Праздник единства народа Казахстана"},{"date":"2025-05-07","name":"День защитника Отечества"},{"date":"2025-05-09","name":"День Победы"},{"date":"2025-07-06","name":"День столицы"},{"date":"2025-07-07","name":"День столицы (перенос с 06.07)"},{"date":"2025-08-30","name":"День Конституции Республики Казахстан"},{"date":"2025-12-01","name":"День Первого Президента"},{"date":"2025-12-16","name":"День Независимости"},{"date":"2025-12-17","name":"День Независимости"}],"transfers":[{"from":"2025-03-22","to":"2025-03-24","note":"Суббота → понедельник"},{"from":"2025-07-06","to":"2025-07-07","note":"Воскресенье → понедельник"}]}}};
 
 // --- core/Enums.js ---
-/**
- * ==========================================================
- * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
- *
- * Enums.js
- * ==========================================================
- */
-
 const PaymentMethod = Object.freeze({
     ANNUITY:         "ANNUITY",
     EQUAL_PRINCIPAL: "EQUAL_PRINCIPAL"
@@ -351,15 +342,6 @@ const DistributionMode = Object.freeze({
 });
 
 // --- core/Constants.js ---
-/**
- * ==========================================================
- * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
- *
- * Constants.js
- * ==========================================================
- */
-
 const APR = Object.freeze({
     BASIS_DAYS:     365,
     MAX_ITERATIONS: 1000,
@@ -367,37 +349,13 @@ const APR = Object.freeze({
 });
 
 // --- core/DateUtils.js ---
-/**
- * ==========================================================
- * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev5
- *
- * DateUtils.js
- * ==========================================================
- */
-
 class DateUtils {
-
-    /**
-     * Количество дней между двумя датами (calendar days).
-     * @param {Date} from
-     * @param {Date} to
-     * @returns {number}
-     */
     static daysBetween(from, to) {
         const msPerDay = 86400000;
         const fromUTC  = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
         const toUTC    = Date.UTC(to.getFullYear(),   to.getMonth(),   to.getDate());
         return Math.round((toUTC - fromUTC) / msPerDay);
     }
-
-    /**
-     * Количество дней по конвенции 30/360 (European / ISDA).
-     *
-     * D1 = min(d1, 30)
-     * D2 = if D1 == 30 then min(d2, 30) else d2
-     * days = (Y2-Y1)*360 + (M2-M1)*30 + (D2-D1)
-     */
     static days30_360(from, to) {
         let y1 = from.getFullYear(), m1 = from.getMonth() + 1, d1 = from.getDate();
         let y2 = to.getFullYear(),   m2 = to.getMonth()   + 1, d2 = to.getDate();
@@ -405,17 +363,7 @@ class DateUtils {
         if (d1 === 30 && d2 === 31) d2 = 30;
         return (y2 - y1) * 360 + (m2 - m1) * 30 + (d2 - d1);
     }
-
-    /**
-     * Клонировать дату.
-     */
-    static clone(date) {
-        return new Date(date.getTime());
-    }
-
-    /**
-     * Добавить N месяцев, сохраняя день (конец месяца — последний день).
-     */
+    static clone(date) { return new Date(date.getTime()); }
     static addMonths(date, n) {
         const d   = new Date(date.getTime());
         const day = d.getDate();
@@ -423,20 +371,11 @@ class DateUtils {
         if (d.getDate() < day) d.setDate(0);
         return d;
     }
-
-    /**
-     * Добавить N дней.
-     */
     static addDays(date, n) {
         const d = new Date(date.getTime());
         d.setDate(d.getDate() + n);
         return d;
     }
-
-    /**
-     * Сравнить две даты (только дату, без времени).
-     * @returns {number} -1 | 0 | 1
-     */
     static compare(a, b) {
         const aUTC = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
         const bUTC = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
@@ -444,42 +383,15 @@ class DateUtils {
         if (aUTC > bUTC) return  1;
         return 0;
     }
-
-    /**
-     * Проверить равенство двух дат (только дата).
-     */
-    static equals(a, b) {
-        return DateUtils.compare(a, b) === 0;
-    }
-
-    /**
-     * Получить день недели (0=Вс, 1=Пн, ..., 6=Сб).
-     */
-    static dayOfWeek(date) {
-        return date.getDay();
-    }
-
-    /**
-     * Проверить — выходной (Сб=6 или Вс=0).
-     */
-    static isWeekend(date) {
-        const dow = date.getDay();
-        return dow === 0 || dow === 6;
-    }
-
-    /**
-     * Форматировать дату как DD.MM.YYYY.
-     */
+    static equals(a, b) { return DateUtils.compare(a, b) === 0; }
+    static dayOfWeek(date) { return date.getDay(); }
+    static isWeekend(date) { const dow = date.getDay(); return dow === 0 || dow === 6; }
     static format(date) {
         const d = String(date.getDate()).padStart(2, '0');
         const m = String(date.getMonth() + 1).padStart(2, '0');
         const y = date.getFullYear();
         return `${d}.${m}.${y}`;
     }
-
-    /**
-     * Получить следующий рабочий день (пропустить выходные).
-     */
     static nextWorkingDay(date, isHolidayFn = null) {
         let d = DateUtils.clone(date);
         d = DateUtils.addDays(d, 1);
@@ -488,427 +400,125 @@ class DateUtils {
         }
         return d;
     }
-
 }
 
 // --- core/Validation.js ---
-/**
- * ==========================================================
- * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
- *
- * Validation.js
- * ==========================================================
- */
-
 class Validation {
-
     static requireNumber(name, value) {
         if (typeof value !== "number" || !Number.isFinite(value)) {
-            throw new TypeError(
-                `${name} must be a finite number, got: ${value}`
-            );
+            throw new TypeError(`${name} must be a finite number, got: ${value}`);
         }
     }
-
     static requirePositive(name, value) {
         Validation.requireNumber(name, value);
-        if (value <= 0) {
-            throw new RangeError(
-                `${name} must be positive, got: ${value}`
-            );
-        }
+        if (value <= 0) throw new RangeError(`${name} must be positive, got: ${value}`);
     }
-
     static requirePositiveOrZero(name, value) {
         Validation.requireNumber(name, value);
-        if (value < 0) {
-            throw new RangeError(
-                `${name} must be >= 0, got: ${value}`
-            );
-        }
+        if (value < 0) throw new RangeError(`${name} must be >= 0, got: ${value}`);
     }
-
     static requireInteger(name, value) {
-        if (!Number.isInteger(value)) {
-            throw new TypeError(
-                `${name} must be an integer, got: ${value}`
-            );
-        }
+        if (!Number.isInteger(value)) throw new TypeError(`${name} must be an integer, got: ${value}`);
     }
-
     static requireDate(name, value) {
         if (!(value instanceof Date) || isNaN(value.getTime())) {
-            throw new TypeError(
-                `${name} must be a valid Date, got: ${value}`
-            );
+            throw new TypeError(`${name} must be a valid Date, got: ${value}`);
         }
     }
-
     static requireString(name, value) {
         if (typeof value !== "string" || value.length === 0) {
-            throw new TypeError(
-                `${name} must be a non-empty string, got: ${value}`
-            );
+            throw new TypeError(`${name} must be a non-empty string, got: ${value}`);
         }
     }
-
 }
 
 // --- core/Money.js ---
-/**
- * ==========================================================
- * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
- *
- * Money.js
- *
- * Утилиты для работы с деньгами (округление).
- * ==========================================================
- */
-
 class Money {
-
-    /**
-     * Округление до 2 знаков (банковское).
-     */
-    static round(value) {
-        return Math.round((value + Number.EPSILON) * 100) / 100;
-    }
-
-    /**
-     * Округление ставки до 4 знаков.
-     */
-    static roundRate(value) {
-        return Math.round((value + Number.EPSILON) * 10000) / 10000;
-    }
-
+    static round(value) { return Math.round((value + Number.EPSILON) * 100) / 100; }
+    static roundRate(value) { return Math.round((value + Number.EPSILON) * 10000) / 10000; }
 }
 
 // --- core/CalendarMode.js ---
-/**
- * ==========================================================
- * Colvir Schedule & APR Calculator (KZ)
- * Version: 5.0-dev1
- *
- * CalendarMode.js — режим календаря праздников
- * ==========================================================
- */
-
 const CalendarMode = Object.freeze({
     COLVIR: "colvir",
     ACTUAL: "actual"
 });
 
 // --- models/PaymentRow.js ---
-/**
- * ==========================================================
- * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
- *
- * PaymentRow.js
- *
- * Строка графика платежей.
- * Не содержит расчетов.
- * ==========================================================
- */
-
 class PaymentRow {
-
-    constructor({
-
-        period,
-
-        paymentDate,
-
-        days,
-
-        openingBalance,
-
-        principal,
-
-        interest,
-
-        payment,
-
-        closingBalance,
-
-        rowType = RowType.NORMAL,
-
-        metadata = {}
-
-    }) {
-
+    constructor({ period, paymentDate, days, openingBalance, principal, interest, payment, closingBalance, rowType = RowType.NORMAL, metadata = {} }) {
         Validation.requireInteger("period", period);
-
         Validation.requireDate("paymentDate", paymentDate);
-
         Validation.requirePositiveOrZero("days", days);
-
         Validation.requirePositiveOrZero("openingBalance", openingBalance);
-
         Validation.requirePositiveOrZero("principal", principal);
-
         Validation.requirePositiveOrZero("interest", interest);
-
         Validation.requirePositiveOrZero("payment", payment);
-
         Validation.requirePositiveOrZero("closingBalance", closingBalance);
-
-        if (!Object.values(RowType).includes(rowType)) {
-
-            throw new Error("Unknown row type.");
-
-        }
-
+        if (!Object.values(RowType).includes(rowType)) throw new Error("Unknown row type.");
         this.period = period;
-
         this.paymentDate = new Date(paymentDate);
-
         this.days = days;
-
         this.openingBalance = Money.round(openingBalance);
-
         this.principal = Money.round(principal);
-
         this.interest = Money.round(interest);
-
         this.payment = Money.round(payment);
-
         this.closingBalance = Money.round(closingBalance);
-
         this.rowType = rowType;
-
-        this.metadata = Object.freeze({
-
-            ...metadata
-
-        });
-
+        this.metadata = Object.freeze({ ...metadata });
         Object.freeze(this);
-
     }
-
     toJSON() {
-
-        return {
-
-            period: this.period,
-
-            paymentDate: this.paymentDate,
-
-            days: this.days,
-
-            openingBalance: this.openingBalance,
-
-            principal: this.principal,
-
-            interest: this.interest,
-
-            payment: this.payment,
-
-            closingBalance: this.closingBalance,
-
-            rowType: this.rowType,
-
-            metadata: this.metadata
-
-        };
-
+        return { period: this.period, paymentDate: this.paymentDate, days: this.days, openingBalance: this.openingBalance, principal: this.principal, interest: this.interest, payment: this.payment, closingBalance: this.closingBalance, rowType: this.rowType, metadata: this.metadata };
     }
-
 }
 
 // --- models/Schedule.js ---
-/**
- * ==========================================================
- * Colvir Schedule & APR Calculator (KZ)
- * Version: 4.0-dev1
- *
- * Schedule.js
- *
- * График платежей.
- * ==========================================================
- */
-
 class Schedule {
-
     constructor(rows = []) {
-
-        if (!Array.isArray(rows)) {
-            throw new TypeError("rows must be an array.");
-        }
-
+        if (!Array.isArray(rows)) throw new TypeError("rows must be an array.");
         for (const row of rows) {
-
-            if (!(row instanceof PaymentRow)) {
-                throw new TypeError(
-                    "Schedule accepts only PaymentRow objects."
-                );
-            }
-
+            if (!(row instanceof PaymentRow)) throw new TypeError("Schedule accepts only PaymentRow objects.");
         }
-
         this.rows = Object.freeze([...rows]);
-
         Object.freeze(this);
-
     }
-
-    get length() {
-
-        return this.rows.length;
-
-    }
-
-    get(index) {
-
-        return this.rows[index];
-
-    }
-
-    totalPayment() {
-
-        return Money.round(
-
-            this.rows.reduce(
-
-                (sum, row) => sum + row.payment,
-
-                0
-
-            )
-
-        );
-
-    }
-
-    totalInterest() {
-
-        return Money.round(
-
-            this.rows.reduce(
-
-                (sum, row) => sum + row.interest,
-
-                0
-
-            )
-
-        );
-
-    }
-
-    totalPrincipal() {
-
-        return Money.round(
-
-            this.rows.reduce(
-
-                (sum, row) => sum + row.principal,
-
-                0
-
-            )
-
-        );
-
-    }
-
-    finalBalance() {
-
-        if (this.rows.length === 0) {
-            return 0;
-        }
-
-        return this.rows[this.rows.length - 1].closingBalance;
-
-    }
-
-    toJSON() {
-
-        return {
-
-            rows: this.rows.map(
-
-                row => row.toJSON()
-
-            )
-
-        };
-
-    }
-
+    get length() { return this.rows.length; }
+    get(index) { return this.rows[index]; }
+    totalPayment()   { return Money.round(this.rows.reduce((sum, row) => sum + row.payment,   0)); }
+    totalInterest()  { return Money.round(this.rows.reduce((sum, row) => sum + row.interest,  0)); }
+    totalPrincipal() { return Money.round(this.rows.reduce((sum, row) => sum + row.principal, 0)); }
+    finalBalance() { return this.rows.length === 0 ? 0 : this.rows[this.rows.length - 1].closingBalance; }
+    toJSON() { return { rows: this.rows.map(row => row.toJSON()) }; }
 }
 
 // --- models/GracePeriod.js ---
 class GracePeriod {
-    constructor({
-        startPeriod,
-        endPeriod,
-        odGrace = false,
-        percentGrace = false
-    }) {
+    constructor({ startPeriod, endPeriod, odGrace = false, percentGrace = false }) {
         this.startPeriod = Number(startPeriod);
         this.endPeriod = Number(endPeriod);
         this.odGrace = Boolean(odGrace);
         this.percentGrace = Boolean(percentGrace);
-
-        if (!Number.isInteger(this.startPeriod) || this.startPeriod < 1) {
-            throw new Error("startPeriod must be integer >= 1.");
-        }
-
-        if (!Number.isInteger(this.endPeriod) || this.endPeriod < this.startPeriod) {
-            throw new Error("endPeriod must be integer and >= startPeriod.");
-        }
-
-        if (!this.odGrace && !this.percentGrace) {
-            throw new Error("At least one of odGrace or percentGrace must be true.");
-        }
-
+        if (!Number.isInteger(this.startPeriod) || this.startPeriod < 1) throw new Error("startPeriod must be integer >= 1.");
+        if (!Number.isInteger(this.endPeriod) || this.endPeriod < this.startPeriod) throw new Error("endPeriod must be integer and >= startPeriod.");
+        if (!this.odGrace && !this.percentGrace) throw new Error("At least one of odGrace or percentGrace must be true.");
         Object.freeze(this);
     }
-
-    includes(period) {
-        return period >= this.startPeriod && period <= this.endPeriod;
-    }
+    includes(period) { return period >= this.startPeriod && period <= this.endPeriod; }
 }
 
 // --- models/Loan.js ---
 class Loan {
-    constructor({
-        principal,
-        annualRate,
-        term,
-        issueDate,
-        firstPaymentDate,
-        lastPaymentDate = null,
-        paymentMethod,
-        gracePeriods = [],
-        distributionMode = DistributionMode.FIRST_PAYMENT
-    }) {
+    constructor({ principal, annualRate, term, issueDate, firstPaymentDate, lastPaymentDate = null, paymentMethod, gracePeriods = [], distributionMode = DistributionMode.FIRST_PAYMENT }) {
         Validation.requirePositive("principal", principal);
         Validation.requirePositiveOrZero("annualRate", annualRate);
         Validation.requireInteger("term", term);
         Validation.requireDate("issueDate", issueDate);
         Validation.requireDate("firstPaymentDate", firstPaymentDate);
-
-        if (lastPaymentDate !== null) {
-            Validation.requireDate("lastPaymentDate", lastPaymentDate);
-        }
-
-        if (!Object.values(PaymentMethod).includes(paymentMethod)) {
-            throw new Error("Unknown payment method.");
-        }
-
-        if (!Object.values(DistributionMode).includes(distributionMode)) {
-            throw new Error("Unknown distribution mode.");
-        }
-
-        if (!Array.isArray(gracePeriods)) {
-            throw new TypeError("gracePeriods must be an array.");
-        }
-
+        if (lastPaymentDate !== null) Validation.requireDate("lastPaymentDate", lastPaymentDate);
+        if (!Object.values(PaymentMethod).includes(paymentMethod)) throw new Error("Unknown payment method.");
+        if (!Object.values(DistributionMode).includes(distributionMode)) throw new Error("Unknown distribution mode.");
+        if (!Array.isArray(gracePeriods)) throw new TypeError("gracePeriods must be an array.");
         this.principal = Number(principal);
         this.annualRate = Number(annualRate);
         this.term = Number(term);
@@ -918,7 +528,6 @@ class Loan {
         this.paymentMethod = paymentMethod;
         this.distributionMode = distributionMode;
         this.gracePeriods = gracePeriods;
-
         Object.freeze(this);
     }
 }
@@ -926,17 +535,13 @@ class Loan {
 // --- models/LoanState.js ---
 class LoanState {
     constructor(loan) {
-        if (!loan) {
-            throw new Error("Loan is required.");
-        }
-
+        if (!loan) throw new Error("Loan is required.");
         this.loan = loan;
         this.balance = Money.round(loan.principal);
         this.period = 0;
         this.currentDate = DateUtils.clone(loan.issueDate);
         this.rows = [];
     }
-
     addRow(row) {
         this.rows.push(row);
         this.period = row.period;
@@ -947,780 +552,233 @@ class LoanState {
 
 // --- models/APRResult.js ---
 class APRResult {
-
-    constructor({
-
-        annualRate,
-
-        annualPercentRate,
-
-        converged,
-
-        iterations,
-
-        residual,
-
-        basisDays,
-
-        metadata = {}
-
-    }) {
-
-        Validation.requireNumber(
-            "annualRate",
-            annualRate
-        );
-
-        Validation.requireNumber(
-            "annualPercentRate",
-            annualPercentRate
-        );
-
-        if (typeof converged !== "boolean") {
-            throw new TypeError(
-                "converged must be boolean."
-            );
-        }
-
-        Validation.requireInteger(
-            "iterations",
-            iterations
-        );
-
-        Validation.requireNumber(
-            "residual",
-            residual
-        );
-
-        Validation.requirePositive(
-            "basisDays",
-            basisDays
-        );
-
-        if (
-            metadata === null ||
-            typeof metadata !== "object" ||
-            Array.isArray(metadata)
-        ) {
-            throw new TypeError(
-                "metadata must be an object."
-            );
-        }
-
+    constructor({ annualRate, annualPercentRate, converged, iterations, residual, basisDays, metadata = {} }) {
+        Validation.requireNumber("annualRate", annualRate);
+        Validation.requireNumber("annualPercentRate", annualPercentRate);
+        if (typeof converged !== "boolean") throw new TypeError("converged must be boolean.");
+        Validation.requireInteger("iterations", iterations);
+        Validation.requireNumber("residual", residual);
+        Validation.requirePositive("basisDays", basisDays);
+        if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) throw new TypeError("metadata must be an object.");
         this.annualRate = annualRate;
-
-        this.annualPercentRate = Money.roundRate(
-            annualPercentRate
-        );
-
+        this.annualPercentRate = Money.roundRate(annualPercentRate);
         this.converged = converged;
-
         this.iterations = iterations;
-
         this.residual = residual;
-
         this.basisDays = basisDays;
-
-        this.metadata = Object.freeze({
-            ...metadata
-        });
-
+        this.metadata = Object.freeze({ ...metadata });
         Object.freeze(this);
-
     }
-
     toJSON() {
-
-        return {
-            annualRate: this.annualRate,
-            annualPercentRate: this.annualPercentRate,
-            converged: this.converged,
-            iterations: this.iterations,
-            residual: this.residual,
-            basisDays: this.basisDays,
-            metadata: this.metadata
-        };
-
+        return { annualRate: this.annualRate, annualPercentRate: this.annualPercentRate, converged: this.converged, iterations: this.iterations, residual: this.residual, basisDays: this.basisDays, metadata: this.metadata };
     }
-
 }
 
 // --- models/CashFlow.js ---
 class CashFlow {
-
-    constructor({
-
-        date,
-
-        amount,
-
-        type = "GENERIC",
-
-        metadata = {}
-
-    }) {
-
-        Validation.requireDate(
-            "date",
-            date
-        );
-
-        Validation.requireNumber(
-            "amount",
-            amount
-        );
-
-        if (typeof type !== "string" || type.length === 0) {
-            throw new TypeError(
-                "type must be a non-empty string."
-            );
-        }
-
-        if (
-            metadata === null ||
-            typeof metadata !== "object" ||
-            Array.isArray(metadata)
-        ) {
-            throw new TypeError(
-                "metadata must be an object."
-            );
-        }
-
+    constructor({ date, amount, type = "GENERIC", metadata = {} }) {
+        Validation.requireDate("date", date);
+        Validation.requireNumber("amount", amount);
+        if (typeof type !== "string" || type.length === 0) throw new TypeError("type must be a non-empty string.");
+        if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) throw new TypeError("metadata must be an object.");
         this.date = new Date(date);
-
         this.amount = Money.round(amount);
-
         this.type = type;
-
-        this.metadata = Object.freeze({
-            ...metadata
-        });
-
+        this.metadata = Object.freeze({ ...metadata });
         Object.freeze(this);
-
     }
-
-    isInflow() {
-        return this.amount > 0;
-    }
-
-    isOutflow() {
-        return this.amount < 0;
-    }
-
-    toJSON() {
-
-        return {
-            date: this.date,
-            amount: this.amount,
-            type: this.type,
-            metadata: this.metadata
-        };
-
-    }
-
+    isInflow()  { return this.amount > 0; }
+    isOutflow() { return this.amount < 0; }
+    toJSON()    { return { date: this.date, amount: this.amount, type: this.type, metadata: this.metadata }; }
 }
 
 // --- models/CashFlowSet.js ---
 class CashFlowSet {
-
     constructor(flows = []) {
-
-        if (!Array.isArray(flows)) {
-            throw new TypeError(
-                "flows must be an array."
-            );
-        }
-
+        if (!Array.isArray(flows)) throw new TypeError("flows must be an array.");
         for (const flow of flows) {
-            if (!(flow instanceof CashFlow)) {
-                throw new TypeError(
-                    "CashFlowSet accepts only CashFlow objects."
-                );
-            }
+            if (!(flow instanceof CashFlow)) throw new TypeError("CashFlowSet accepts only CashFlow objects.");
         }
-
-        this.flows = Object.freeze(
-            [...flows]
-        );
-
+        this.flows = Object.freeze([...flows]);
         Object.freeze(this);
-
     }
-
-    get length() {
-        return this.flows.length;
-    }
-
-    get(index) {
-        return this.flows[index];
-    }
-
-    toArray() {
-        return this.flows.slice();
-    }
-
+    get length() { return this.flows.length; }
+    get(index) { return this.flows[index]; }
+    toArray() { return this.flows.slice(); }
     sorted() {
-
-        const sortedFlows = this.toArray().sort(
-            (a, b) => a.date.getTime() - b.date.getTime()
-        );
-
-        return new CashFlowSet(
-            sortedFlows
-        );
-
+        const sortedFlows = this.toArray().sort((a, b) => a.date.getTime() - b.date.getTime());
+        return new CashFlowSet(sortedFlows);
     }
-
-    baseDate() {
-
-        if (this.flows.length === 0) {
-            return null;
-        }
-
-        return this.sorted().get(0).date;
-
-    }
-
-    totalInflow() {
-
-        return Money.round(
-            this.flows.reduce((sum, flow) => {
-                return flow.amount > 0
-                    ? sum + flow.amount
-                    : sum;
-            }, 0)
-        );
-
-    }
-
-    totalOutflow() {
-
-        return Money.round(
-            this.flows.reduce((sum, flow) => {
-                return flow.amount < 0
-                    ? sum + Math.abs(flow.amount)
-                    : sum;
-            }, 0)
-        );
-
-    }
-
-    netAmount() {
-
-        return Money.round(
-            this.flows.reduce((sum, flow) => {
-                return sum + flow.amount;
-            }, 0)
-        );
-
-    }
-
+    baseDate() { return this.flows.length === 0 ? null : this.sorted().get(0).date; }
+    totalInflow()  { return Money.round(this.flows.reduce((sum, flow) => flow.amount > 0 ? sum + flow.amount : sum, 0)); }
+    totalOutflow() { return Money.round(this.flows.reduce((sum, flow) => flow.amount < 0 ? sum + Math.abs(flow.amount) : sum, 0)); }
+    netAmount()    { return Money.round(this.flows.reduce((sum, flow) => sum + flow.amount, 0)); }
     hasMixedSigns() {
-
-        const hasPositive = this.flows.some(
-            (flow) => flow.amount > 0
-        );
-
-        const hasNegative = this.flows.some(
-            (flow) => flow.amount < 0
-        );
-
+        const hasPositive = this.flows.some(flow => flow.amount > 0);
+        const hasNegative = this.flows.some(flow => flow.amount < 0);
         return hasPositive && hasNegative;
-
     }
-
     withAppended(flow) {
-
-        if (!(flow instanceof CashFlow)) {
-            throw new TypeError(
-                "flow must be a CashFlow instance."
-            );
-        }
-
-        return new CashFlowSet([
-            ...this.flows,
-            flow
-        ]);
-
+        if (!(flow instanceof CashFlow)) throw new TypeError("flow must be a CashFlow instance.");
+        return new CashFlowSet([...this.flows, flow]);
     }
-
-    toJSON() {
-
-        return {
-            flows: this.flows.map(
-                (flow) => flow.toJSON()
-            )
-        };
-
-    }
-
+    toJSON() { return { flows: this.flows.map(flow => flow.toJSON()) }; }
 }
 
 // --- calendar/KazakhstanCalendar.js ---
-/**
- * ==========================================================
- * Colvir Schedule & APR Calculator (KZ)
- * Version: 5.0-dev1
- *
- * KazakhstanCalendar.js
- *
- * Два режима:
- *   CalendarMode.COLVIR  — список праздников как в Colvir
- *   CalendarMode.ACTUAL  — актуальные по постановлениям Правительства РК
- *
- * Использует __HOLIDAYS_DATA__ (встроен из holidays.json)
- * ==========================================================
- */
-
 class KazakhstanCalendar {
-
     constructor(mode = CalendarMode.COLVIR) {
-        if (!Object.values(CalendarMode).includes(mode)) {
-            throw new Error("Unknown CalendarMode: " + mode);
-        }
+        if (!Object.values(CalendarMode).includes(mode)) throw new Error("Unknown CalendarMode: " + mode);
         this.mode = mode;
     }
-
-    /**
-     * Проверить — является ли дата праздником.
-     */
     isHoliday(date) {
         const m = date.getMonth() + 1;
         const d = date.getDate();
         const y = date.getFullYear();
-
         if (this.mode === CalendarMode.COLVIR) {
             return __HOLIDAYS_DATA__.colvir.fixed.some(h => h.month === m && h.day === d);
         }
-
-        // ACTUAL mode
-        const yearData = __HOLIDAYS_DATA__.actual[year];
+        const yearData = __HOLIDAYS_DATA__.actual[y];
         if (!yearData) {
-            // Fallback to colvir if year not found
             return __HOLIDAYS_DATA__.colvir.fixed.some(h => h.month === m && h.day === d);
         }
         const isoStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         return yearData.holidays.some(h => h.date === isoStr);
     }
-
-    /**
-     * Проверить — нерабочий день (выходной или праздник).
-     */
-    isNonWorkingDay(date) {
-        return DateUtils.isWeekend(date) || this.isHoliday(date);
-    }
-
-    /**
-     * Получить следующий рабочий день (если дата рабочая — вернуть её же).
-     */
+    isNonWorkingDay(date) { return DateUtils.isWeekend(date) || this.isHoliday(date); }
     adjustPaymentDate(date) {
         let d = DateUtils.clone(date);
-        while (this.isNonWorkingDay(d)) {
-            d = DateUtils.addDays(d, 1);
-        }
+        while (this.isNonWorkingDay(d)) { d = DateUtils.addDays(d, 1); }
         return d;
     }
-
-    /**
-     * Получить описание праздника (для ACTUAL режима).
-     */
     getHolidayName(date) {
         const m = date.getMonth() + 1;
         const d = date.getDate();
         const y = date.getFullYear();
-
         if (this.mode === CalendarMode.COLVIR) {
             const h = __HOLIDAYS_DATA__.colvir.fixed.find(h => h.month === m && h.day === d);
             return h ? h.name : null;
         }
-
         const yearData = __HOLIDAYS_DATA__.actual[y];
         if (!yearData) {
             const h = __HOLIDAYS_DATA__.colvir.fixed.find(h => h.month === m && h.day === d);
             return h ? h.name : null;
         }
-
         const isoStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         const holiday = yearData.holidays.find(h => h.date === isoStr);
         return holiday ? holiday.name : null;
     }
-
 }
 
 // --- math/InterestCalculator.js ---
-/**
- * ==========================================================
- * InterestCalculator
- *
- * Colvir convention: 30/360
- *
- * interest = balance * annualRate / 100 * days30_360 / 360
- *
- * days must be computed via DateUtils.days30_360().
- * ==========================================================
- */
-
 class InterestCalculator {
-
-    static calculate(
-
-        balance,
-
-        annualRate,
-
-        days
-
-    ) {
-
-        const interest =
-
-            balance
-
-            *
-
-            annualRate
-
-            /
-
-            100
-
-            *
-
-            days
-
-            /
-
-            360;
-
-        return Money.round(
-
-            interest
-
-        );
-
+    static calculate(balance, annualRate, days) {
+        return Money.round(balance * annualRate / 100 * days / 360);
     }
-
 }
 
 // --- math/PaymentCalculator.js ---
-/**
- * ==========================================================
- * PaymentCalculator.js
- * ==========================================================
- */
-
 class PaymentCalculator {
-
-    static calculateAnnuity(
-        principal,
-        annualRate,
-        periods,
-        dates = null
-    ) {
-
-        if (annualRate === 0) {
-            return Money.round(principal / periods);
-        }
-
+    static calculateAnnuity(principal, annualRate, periods, dates = null) {
+        if (annualRate === 0) return Money.round(principal / periods);
         if (dates && dates.length === periods + 1) {
-            return PaymentCalculator._calculateAnnuityBy30_360(
-                principal,
-                annualRate,
-                dates
-            );
+            return PaymentCalculator._calculateAnnuityBy30_360(principal, annualRate, dates);
         }
-
         const monthlyRate = annualRate / 100 / 12;
         const factor = Math.pow(1 + monthlyRate, periods);
-        const payment = principal * monthlyRate * factor / (factor - 1);
-        return Money.round(payment);
-
+        return Money.round(principal * monthlyRate * factor / (factor - 1));
     }
-
-    static calculateAnnuityWithGrace(
-        principal,
-        annualRate,
-        allDates,
-        gracePeriods,
-        startPeriod = 1
-    ) {
-
+    static calculateAnnuityWithGrace(principal, annualRate, allDates, gracePeriods, startPeriod = 1) {
         const totalPeriods = allDates.length - 1;
-
         if (annualRate === 0) {
             const normalCount = Array.from(
                 { length: totalPeriods - startPeriod + 1 },
                 (_, i) => i + startPeriod
-            ).filter(
-                p => !gracePeriods.some(g => g && g.includes && g.includes(p))
-            ).length;
+            ).filter(p => !gracePeriods.some(g => g && g.includes && g.includes(p))).length;
             return Money.round(principal / (normalCount || 1));
         }
-
         let graceEndIdx = startPeriod - 1;
         for (let i = startPeriod; i <= totalPeriods; i++) {
-            const inOdGrace = gracePeriods.some(
-                g =>
-                    g && g.odGrace && g.includes && g.includes(i)
-            );
-            if (inOdGrace) {
-                graceEndIdx = i;
-            } else {
-                break;
-            }
+            const inOdGrace = gracePeriods.some(g => g && g.odGrace && g.includes && g.includes(i));
+            if (inOdGrace) { graceEndIdx = i; } else { break; }
         }
-
         const virtualStartDate = allDates[graceEndIdx];
         const normalDates = [virtualStartDate];
         for (let i = graceEndIdx + 1; i <= totalPeriods; i++) {
-            const inGrace = gracePeriods.some(
-                g => g && g.includes && g.includes(i)
-            );
-            if (!inGrace) {
-                normalDates.push(allDates[i]);
-            }
+            const inGrace = gracePeriods.some(g => g && g.includes && g.includes(i));
+            if (!inGrace) normalDates.push(allDates[i]);
         }
-
-        if (normalDates.length <= 1) {
-            return 0;
-        }
-
-        return PaymentCalculator._calculateAnnuityBy30_360(
-            principal,
-            annualRate,
-            normalDates
-        );
-
+        if (normalDates.length <= 1) return 0;
+        return PaymentCalculator._calculateAnnuityBy30_360(principal, annualRate, normalDates);
     }
-
     static _calculateAnnuityBy30_360(principal, annualRate, dates) {
         const n = dates.length - 1;
         if (n <= 0) return 0;
-
         const r_periods = [];
         for (let i = 1; i <= n; i++) {
             const days = DateUtils.days30_360(dates[i-1], dates[i]);
             r_periods.push(annualRate / 100 * days / 360);
         }
-
         let denominator = 0;
         let productSoFar = 1;
         for (let k = n - 1; k >= 0; k--) {
             productSoFar *= (1 + r_periods[k]);
             denominator += 1 / productSoFar;
         }
-
         if (denominator === 0) return 0;
-
-        const pmt = principal / denominator;
-        return Money.round(pmt);
+        return Money.round(principal / denominator);
     }
-
 }
 
 // --- math/PeriodCalculator.js ---
 class PeriodCalculator {
-
     static calculate(fromDate, toDate) {
-
-        const days = DateUtils.daysBetween(
-            fromDate,
-            toDate
-        );
-
-        return {
-
-            fromDate,
-
-            toDate,
-
-            days
-
-        };
-
+        return { fromDate, toDate, days: DateUtils.daysBetween(fromDate, toDate) };
     }
-
 }
 
 // --- math/APRCalculator.js ---
-/**
- * APRCalculator — ГЭСВ по Правилам НБРК (Постановление №87 от 26.03.2018).
- * Метод Ньютона–Рафсона.
- */
-
 class APRCalculator {
-
-    static calculate(
-        cashFlowSet,
-        options = {}
-    ) {
-
-        if (!(cashFlowSet instanceof CashFlowSet)) {
-            throw new TypeError(
-                "cashFlowSet must be CashFlowSet."
-            );
-        }
-
-        if (cashFlowSet.length === 0) {
-            throw new Error(
-                "cashFlowSet is empty."
-            );
-        }
-
-        if (!cashFlowSet.hasMixedSigns()) {
-            throw new Error(
-                "cashFlowSet must contain both positive and negative flows."
-            );
-        }
-
-        const basisDays =
-            options.basisDays || APR.BASIS_DAYS;
-
-        Validation.requirePositive(
-            "basisDays",
-            basisDays
-        );
-
-        const guess =
-            typeof options.guess === "number"
-                ? options.guess
-                : 0.30;
-
-        const tolerance =
-            typeof options.tolerance === "number"
-                ? options.tolerance
-                : APR.EPSILON;
-
-        const maxIterations =
-            Number.isInteger(options.maxIterations)
-                ? options.maxIterations
-                : APR.MAX_ITERATIONS;
-
-        const flows = cashFlowSet
-            .sorted()
-            .toArray();
-
-        const baseDate = flows[0].date;
-
-        let rate = guess;
-        let converged = false;
-        let residual = null;
-        let iterations = 0;
-
+    static calculate(cashFlowSet, options = {}) {
+        if (!(cashFlowSet instanceof CashFlowSet)) throw new TypeError("cashFlowSet must be CashFlowSet.");
+        if (cashFlowSet.length === 0) throw new Error("cashFlowSet is empty.");
+        if (!cashFlowSet.hasMixedSigns()) throw new Error("cashFlowSet must contain both positive and negative flows.");
+        const basisDays     = options.basisDays || APR.BASIS_DAYS;
+        Validation.requirePositive("basisDays", basisDays);
+        const guess         = typeof options.guess === "number" ? options.guess : 0.30;
+        const tolerance     = typeof options.tolerance === "number" ? options.tolerance : APR.EPSILON;
+        const maxIterations = Number.isInteger(options.maxIterations) ? options.maxIterations : APR.MAX_ITERATIONS;
+        const flows         = cashFlowSet.sorted().toArray();
+        const baseDate      = flows[0].date;
+        let rate = guess, converged = false, residual = null, iterations = 0;
         for (let i = 0; i < maxIterations; i++) {
-
             iterations = i + 1;
-
-            const f = APRCalculator.npv(
-                flows,
-                rate,
-                baseDate,
-                basisDays
-            );
-
-            const df = APRCalculator.npvDerivative(
-                flows,
-                rate,
-                baseDate,
-                basisDays
-            );
-
+            const f  = APRCalculator.npv(flows, rate, baseDate, basisDays);
+            const df = APRCalculator.npvDerivative(flows, rate, baseDate, basisDays);
             residual = f;
-
-            if (Math.abs(f) < tolerance) {
-                converged = true;
-                break;
-            }
-
-            if (Math.abs(df) < tolerance) {
-                break;
-            }
-
+            if (Math.abs(f) < tolerance) { converged = true; break; }
+            if (Math.abs(df) < tolerance) break;
             const nextRate = rate - f / df;
-
-            if (!Number.isFinite(nextRate)) {
-                break;
-            }
-
-            if (nextRate <= -0.9999999999) {
-                break;
-            }
-
+            if (!Number.isFinite(nextRate)) break;
+            if (nextRate <= -0.9999999999) break;
             rate = nextRate;
-
         }
-
-        return new APRResult({
-            annualRate: rate,
-            annualPercentRate: rate * 100,
-            converged,
-            iterations,
-            residual: residual ?? 0,
-            basisDays,
-            metadata: {
-                baseDate,
-                method: "NEWTON_RAPHSON"
-            }
-        });
-
+        return new APRResult({ annualRate: rate, annualPercentRate: rate * 100, converged, iterations, residual: residual ?? 0, basisDays, metadata: { baseDate, method: "NEWTON_RAPHSON" } });
     }
-
     static npv(flows, annualRate, baseDate, basisDays) {
-
         return flows.reduce((sum, flow) => {
-
-            const days = DateUtils.daysBetween(
-                baseDate,
-                flow.date
-            );
-
-            const exponent = days / basisDays;
-
-            return (
-                sum +
-                flow.amount /
-                    Math.pow(
-                        1 + annualRate,
-                        exponent
-                    )
-            );
-
+            const days = DateUtils.daysBetween(baseDate, flow.date);
+            return sum + flow.amount / Math.pow(1 + annualRate, days / basisDays);
         }, 0);
-
     }
-
     static npvDerivative(flows, annualRate, baseDate, basisDays) {
-
         return flows.reduce((sum, flow) => {
-
-            const days = DateUtils.daysBetween(
-                baseDate,
-                flow.date
-            );
-
+            const days = DateUtils.daysBetween(baseDate, flow.date);
             const exponent = days / basisDays;
-
-            if (exponent === 0) {
-                return sum;
-            }
-
-            return (
-                sum +
-                flow.amount *
-                    (
-                        -exponent /
-                        Math.pow(
-                            1 + annualRate,
-                            exponent + 1
-                        )
-                    )
-            );
-
+            if (exponent === 0) return sum;
+            return sum + flow.amount * (-exponent / Math.pow(1 + annualRate, exponent + 1));
         }, 0);
-
     }
-
 }
 
 // --- engine/ScheduleEngine.js ---
@@ -1747,22 +805,26 @@ class ScheduleEngine {
             metadata:       { technical: true, kind: 'ISSUE' }
         }));
 
-        const allDates = this._buildPaymentDates(loan);
+        const allDates    = this._buildPaymentDates(loan);
         const gracePeriods = loan.gracePeriods || [];
 
         let balance = Money.round(loan.principal);
         let accumulatedPercentGrace = 0;
 
+        // Единый PMT для всего графика — рассчитывается с учётом grace-периодов.
+        // calculateAnnuityWithGrace строит normalDates начиная с конца первого
+        // непрерывного блока odGrace (или с allDates[0] если odGrace нет).
+        // Этот PMT остаётся постоянным для ВСЕХ нормальных периодов.
         const pmt = this._calculatePMT(loan, allDates, gracePeriods);
 
         for (let period = 1; period <= loan.term; period++) {
 
-            const fromDate    = allDates[period - 1];
-            const toDate      = allDates[period];
-            const days30_360  = DateUtils.days30_360(fromDate, toDate);
+            const fromDate   = allDates[period - 1];
+            const toDate     = allDates[period];
+            const days30_360 = DateUtils.days30_360(fromDate, toDate);
 
-            const inOdGrace   = gracePeriods.some(g => g.odGrace      && g.includes(period));
-            const inPctGrace  = gracePeriods.some(g => g.percentGrace && g.includes(period));
+            const inOdGrace  = gracePeriods.some(g => g.odGrace      && g.includes(period));
+            const inPctGrace = gracePeriods.some(g => g.percentGrace && g.includes(period));
 
             let principalPaid = 0;
             let interestPaid  = 0;
@@ -1791,46 +853,53 @@ class ScheduleEngine {
                 paymentAmount = principalPaid;
 
             } else {
-                // Нормальный период
-                let extraPrincipal = 0;
-                let extraInterest  = 0;
-
+                // ── НОРМАЛЬНЫЙ ПЕРИОД ──────────────────────────────────────────────
+                //
+                // Накопленные проценты от percentGrace:
+                //   FIRST_PAYMENT  → добавляем всё к текущему периоду один раз
+                //   ALL_NEXT_PAYMENTS → размазываем равномерно по оставшимся нормальным периодам
+                //
+                let extraInterest = 0;
                 if (accumulatedPercentGrace > 0) {
                     if (loan.distributionMode === DistributionMode.FIRST_PAYMENT) {
-                        extraInterest             = accumulatedPercentGrace;
-                        accumulatedPercentGrace   = 0;
+                        extraInterest           = accumulatedPercentGrace;
+                        accumulatedPercentGrace = 0;
                     } else {
-                        const remainingNormalPeriods = this._countRemainingNormal(period, loan.term, gracePeriods);
-                        extraInterest           = Money.round(accumulatedPercentGrace / remainingNormalPeriods);
+                        const remainingNormal   = this._countRemainingNormal(period, loan.term, gracePeriods);
+                        extraInterest           = Money.round(accumulatedPercentGrace / remainingNormal);
                         accumulatedPercentGrace = Money.round(accumulatedPercentGrace - extraInterest);
                     }
                 }
 
-                const prevOdGracePeriods = gracePeriods.filter(g => g.odGrace);
-                const lastOdGraceEnd = prevOdGracePeriods.reduce((max, g) => Math.max(max, g.endPeriod), 0);
+                // Аннуитет vs равные части ОД.
+                //
+                // Для аннуитета с FIRST_PAYMENT:
+                //   pmt уже учитывает odGrace (рассчитан через calculateAnnuityWithGrace).
+                //   Для ВСЕХ нормальных периодов: principalPaid = pmt - currentInterest.
+                //   Не нужна специальная ветка «первый период после grace» —
+                //   pmt и так посчитан от текущего balance (= loan.principal, т.к. ОД не гасился).
+                //
+                // Для аннуитета с ALL_NEXT_PAYMENTS:
+                //   После odGrace пересчитываем pmt от текущего периода.
+                //
+                if (loan.paymentMethod === PaymentMethod.ANNUITY) {
 
-                if (lastOdGraceEnd > 0 && period === lastOdGraceEnd + 1) {
-                    if (loan.distributionMode === DistributionMode.FIRST_PAYMENT) {
-                        if (loan.paymentMethod === PaymentMethod.ANNUITY) {
-                            principalPaid = Money.round(pmt - interest - extraInterest);
-                            if (principalPaid < 0) principalPaid = 0;
-                        } else {
-                            const equalShare = Money.round(loan.principal / loan.term);
-                            principalPaid = balance - Money.round(loan.principal * (loan.term - period) / loan.term);
-                        }
+                    let effectivePmt;
+                    if (loan.distributionMode === DistributionMode.ALL_NEXT_PAYMENTS) {
+                        // Пересчитываем pmt от текущего периода (текущий balance)
+                        effectivePmt = this._calculatePMTFrom(loan, allDates, gracePeriods, period);
                     } else {
-                        if (loan.paymentMethod === PaymentMethod.ANNUITY) {
-                            const newPmt = this._calculatePMTFrom(loan, allDates, gracePeriods, period);
-                            principalPaid = Money.round(newPmt - interest - extraInterest);
-                            if (principalPaid < 0) principalPaid = 0;
-                        } else {
-                            principalPaid = Money.round(balance / (loan.term - period + 1));
-                        }
+                        // FIRST_PAYMENT: единый глобальный pmt для всех нормальных периодов
+                        effectivePmt = pmt;
                     }
+
+                    principalPaid = Money.round(effectivePmt - interest - extraInterest);
+                    if (principalPaid < 0) principalPaid = 0;
+
                 } else {
-                    if (loan.paymentMethod === PaymentMethod.ANNUITY) {
-                        principalPaid = Money.round(pmt - interest - extraInterest);
-                        if (principalPaid < 0) principalPaid = 0;
+                    // EQUAL_PRINCIPAL
+                    if (loan.distributionMode === DistributionMode.ALL_NEXT_PAYMENTS) {
+                        principalPaid = Money.round(balance / (loan.term - period + 1));
                     } else {
                         principalPaid = Money.round(loan.principal / loan.term);
                     }
@@ -1840,7 +909,7 @@ class ScheduleEngine {
                 paymentAmount = principalPaid + interestPaid;
             }
 
-            // Last period correction
+            // Коррекция последнего периода — закрываем остаток
             if (period === loan.term) {
                 principalPaid = balance;
                 interestPaid  = interest + accumulatedPercentGrace;
@@ -1870,9 +939,8 @@ class ScheduleEngine {
     }
 
     _buildPaymentDates(loan) {
-        const dates = [DateUtils.clone(loan.issueDate)];
+        const dates   = [DateUtils.clone(loan.issueDate)];
         const calendar = this.calendar;
-
         for (let i = 0; i < loan.term; i++) {
             let planned;
             if (i === loan.term - 1 && loan.lastPaymentDate) {
@@ -1888,34 +956,22 @@ class ScheduleEngine {
 
     _calculatePMT(loan, allDates, gracePeriods) {
         if (loan.paymentMethod !== PaymentMethod.ANNUITY) return 0;
-
         const hasOdGrace = gracePeriods.some(g => g.odGrace);
         if (hasOdGrace) {
             return PaymentCalculator.calculateAnnuityWithGrace(
-                loan.principal,
-                loan.annualRate,
-                allDates,
-                gracePeriods,
-                1
+                loan.principal, loan.annualRate, allDates, gracePeriods, 1
             );
         }
-
         return PaymentCalculator.calculateAnnuity(
-            loan.principal,
-            loan.annualRate,
-            loan.term,
-            allDates
+            loan.principal, loan.annualRate, loan.term, allDates
         );
     }
 
+    // Для ALL_NEXT_PAYMENTS: пересчёт pmt начиная с fromPeriod
     _calculatePMTFrom(loan, allDates, gracePeriods, fromPeriod) {
         if (loan.paymentMethod !== PaymentMethod.ANNUITY) return 0;
         return PaymentCalculator.calculateAnnuityWithGrace(
-            loan.principal,
-            loan.annualRate,
-            allDates,
-            gracePeriods,
-            fromPeriod
+            loan.principal, loan.annualRate, allDates, gracePeriods, fromPeriod
         );
     }
 
@@ -1932,132 +988,54 @@ class ScheduleEngine {
 
 // --- builders/CashFlowBuilder.js ---
 class CashFlowBuilder {
-
     static fromLoanAndSchedule(loan, schedule, options = {}) {
         const fees = Array.isArray(options.fees) ? options.fees : [];
-
         const issueAmount = loan.principal - fees.reduce((sum, f) => {
-            if (DateUtils.equals(new Date(f.date), loan.issueDate)) {
-                return sum + f.amount;
-            }
+            if (DateUtils.equals(new Date(f.date), loan.issueDate)) return sum + f.amount;
             return sum;
         }, 0);
-
         const flowList = [
-            new CashFlow({
-                date:   DateUtils.clone(loan.issueDate),
-                amount: -issueAmount,
-                type:   'DISBURSEMENT',
-                metadata: { description: 'Выдача займа' }
-            })
+            new CashFlow({ date: DateUtils.clone(loan.issueDate), amount: -issueAmount, type: 'DISBURSEMENT', metadata: { description: 'Выдача займа' } })
         ];
-
         for (const row of schedule.rows) {
             if (row.metadata && row.metadata.technical) continue;
             if (row.payment === 0) continue;
-            flowList.push(new CashFlow({
-                date:   DateUtils.clone(row.paymentDate),
-                amount: row.payment,
-                type:   'PAYMENT',
-                metadata: { period: row.period }
-            }));
+            flowList.push(new CashFlow({ date: DateUtils.clone(row.paymentDate), amount: row.payment, type: 'PAYMENT', metadata: { period: row.period } }));
         }
-
         for (const fee of fees) {
             if (!DateUtils.equals(new Date(fee.date), loan.issueDate)) {
-                flowList.push(new CashFlow({
-                    date:   new Date(fee.date),
-                    amount: fee.amount,
-                    type:   'FEE',
-                    metadata: { description: fee.description || 'Комиссия' }
-                }));
+                flowList.push(new CashFlow({ date: new Date(fee.date), amount: fee.amount, type: 'FEE', metadata: { description: fee.description || 'Комиссия' } }));
             }
         }
-
         return new CashFlowSet(flowList);
     }
-
 }
 
 // --- services/LoanCalculator.js ---
 class LoanCalculator {
-
     constructor(calendar = null) {
-
         this.calendar = calendar;
-
-        this.scheduleEngine = new ScheduleEngine(
-            calendar
-        );
-
+        this.scheduleEngine = new ScheduleEngine(calendar);
     }
-
     calculate(loan, options = {}) {
-
-        const schedule =
-            this.scheduleEngine.generate(
-                loan
-            );
-
-        const fees = Array.isArray(options.fees)
-            ? options.fees
-            : [];
-
-        const cashFlows =
-            CashFlowBuilder.fromLoanAndSchedule(
-                loan,
-                schedule,
-                { fees }
-            );
-
+        const schedule   = this.scheduleEngine.generate(loan);
+        const fees       = Array.isArray(options.fees) ? options.fees : [];
+        const cashFlows  = CashFlowBuilder.fromLoanAndSchedule(loan, schedule, { fees });
         const aprOptions = {
-            basisDays:
-                options.apr &&
-                Number.isFinite(options.apr.basisDays)
-                    ? options.apr.basisDays
-                    : APR.BASIS_DAYS,
-
-            guess:
-                options.apr &&
-                Number.isFinite(options.apr.guess)
-                    ? options.apr.guess
-                    : undefined,
-
-            tolerance:
-                options.apr &&
-                Number.isFinite(options.apr.tolerance)
-                    ? options.apr.tolerance
-                    : undefined,
-
-            maxIterations:
-                options.apr &&
-                Number.isInteger(options.apr.maxIterations)
-                    ? options.apr.maxIterations
-                    : undefined
+            basisDays:     options.apr && Number.isFinite(options.apr.basisDays)     ? options.apr.basisDays     : APR.BASIS_DAYS,
+            guess:         options.apr && Number.isFinite(options.apr.guess)         ? options.apr.guess         : undefined,
+            tolerance:     options.apr && Number.isFinite(options.apr.tolerance)     ? options.apr.tolerance     : undefined,
+            maxIterations: options.apr && Number.isInteger(options.apr.maxIterations) ? options.apr.maxIterations : undefined
         };
-
-        const apr =
-            APRCalculator.calculate(
-                cashFlows,
-                aprOptions
-            );
-
-        return {
-            loan,
-            schedule,
-            cashFlows,
-            apr
-        };
-
+        const apr = APRCalculator.calculate(cashFlows, aprOptions);
+        return { loan, schedule, cashFlows, apr };
     }
-
 }
 
-// APR helper: принимает простой массив [{date,amount}]
+// APR helper
 function __aprFromArray(rawFlows, opts) {
   const flows = rawFlows.map(f => new CashFlow({ date: f.date, amount: f.amount, type: 'GENERIC', metadata: {} }));
-  const cfs = new CashFlowSet(flows);
-  return APRCalculator.calculate(cfs, opts);
+  return APRCalculator.calculate(new CashFlowSet(flows), opts);
 }
 
 /**
@@ -2121,12 +1099,10 @@ function addMonthsSafe(dateValue, n) {
     if (d.getDate() < day) d.setDate(0);
     return d;
 }
-
 function getCalendar() {
     const mode = els.calendarMode ? els.calendarMode.value : CalendarMode.COLVIR;
     return new KazakhstanCalendar(mode);
 }
-
 function updateCalendarBadge() {
     if (!els.calendarModeBadge) return;
     const mode = els.calendarMode ? els.calendarMode.value : CalendarMode.COLVIR;
@@ -2276,9 +1252,8 @@ function updateRowTotal(rowIdx) {
     if (!row) return;
     const principal = edit.principal !== undefined ? Number(edit.principal) : row.principal;
     const interest  = edit.interest  !== undefined ? Number(edit.interest)  : row.interest;
-    const payment   = principal + interest;
     const payCell   = tr.querySelector('.payment-cell');
-    if (payCell) payCell.textContent = fmt(payment);
+    if (payCell) payCell.textContent = fmt(principal + interest);
 }
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
