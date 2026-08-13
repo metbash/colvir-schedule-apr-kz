@@ -1,1 +1,1 @@
-placeholder
+[PYTHON_INJECT: app_js_v3]
