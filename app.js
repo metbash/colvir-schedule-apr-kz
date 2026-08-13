@@ -54,26 +54,64 @@ class DateUtils {
 class Calendar {
     constructor(mode = 'none', holidaysData = null) {
         this.mode = mode;
-        this._fixed = new Set();
+        this._fixed     = new Set();   // "month-day" keys for fixed holidays
+        this._fixedList = [];          // raw [{month, day}] for substitute calc
+        this._subCache  = new Map();   // year → Set of substitute-holiday date-strings
         if (mode === 'colvir' && holidaysData && holidaysData.colvir) {
             for (const h of holidaysData.colvir.fixed) {
                 this._fixed.add(`${h.month}-${h.day}`);
+                this._fixedList.push({ month: h.month, day: h.day });
             }
         }
     }
+
     isHoliday(d) {
         if (this.mode === 'none') return false;
         const key = `${d.getMonth() + 1}-${d.getDate()}`;
         return this._fixed.has(key);
     }
+
     isWeekend(d) {
         return d.getDay() === 0 || d.getDay() === 6;
     }
+
+    // Возвращает Set строк "YYYY-M-D" для замещающих выходных года.
+    // Правило КЗ: если фиксированный праздник → сб, то следующий пн (+2) нерабочий;
+    //             если → вс, то следующий пн (+1) нерабочий.
+    _getSubstituteHolidays(year) {
+        if (this._subCache.has(year)) return this._subCache.get(year);
+        const subs = new Set();
+        for (const h of this._fixedList) {
+            const hd = new Date(year, h.month - 1, h.day);
+            if (hd.getFullYear() !== year) continue; // guard against month overflow
+            const wd = hd.getDay(); // 0=Sun, 6=Sat
+            let offset = 0;
+            if (wd === 6) offset = 2;      // суббота → +2 → понедельник
+            else if (wd === 0) offset = 1; // воскресенье → +1 → понедельник
+            if (offset > 0) {
+                const sub = new Date(hd);
+                sub.setDate(hd.getDate() + offset);
+                subs.add(`${sub.getFullYear()}-${sub.getMonth() + 1}-${sub.getDate()}`);
+            }
+        }
+        this._subCache.set(year, subs);
+        return subs;
+    }
+
+    _isSubstitute(d) {
+        const key  = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+        const subs = this._getSubstituteHolidays(d.getFullYear());
+        return subs.has(key);
+    }
+
     adjustPaymentDate(d) {
         if (this.mode === 'none') return d;
-        let adj = new Date(d);
-        while (this.isWeekend(adj) || this.isHoliday(adj)) {
+        let adj   = new Date(d);
+        let guard = 0;
+        while (guard < 20 &&
+               (this.isWeekend(adj) || this.isHoliday(adj) || this._isSubstitute(adj))) {
             adj.setDate(adj.getDate() + 1);
+            guard++;
         }
         return adj;
     }
