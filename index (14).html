@@ -431,11 +431,40 @@ class KazakhstanCalendar {
         return yearData.holidays.some(h => h.date === isoStr);
     }
     isNonWorkingDay(date) { return DateUtils.isWeekend(date) || this.isHoliday(date); }
+
+    // Правило переноса даты платежа:
+    // 1. Если плановая дата — рабочий день, возвращаем её без изменений.
+    // 2. Если нерабочий — пробуем сдвинуть ВПЕРЁД до ближайшего рабочего дня.
+    // 3. Если при сдвиге вперёд мы переходим в следующий календарный месяц —
+    //    вместо этого берём ближайший рабочий день НАЗАД (предыдущий рабочий день).
     adjustPaymentDate(date) {
         let d = DateUtils.clone(date);
-        while (this.isNonWorkingDay(d)) { d = DateUtils.addDays(d, 1); }
-        return d;
+
+        // Если дата уже рабочая — ничего не делаем
+        if (!this.isNonWorkingDay(d)) return d;
+
+        const originalMonth = d.getMonth();
+        const originalYear  = d.getFullYear();
+
+        // Пробуем сдвинуть вперёд
+        let forward = DateUtils.clone(d);
+        while (this.isNonWorkingDay(forward)) {
+            forward = DateUtils.addDays(forward, 1);
+        }
+
+        // Если сдвиг вперёд остался в том же месяце — используем его
+        if (forward.getMonth() === originalMonth && forward.getFullYear() === originalYear) {
+            return forward;
+        }
+
+        // Иначе сдвигаем назад до ближайшего рабочего дня
+        let backward = DateUtils.clone(d);
+        while (this.isNonWorkingDay(backward)) {
+            backward = DateUtils.addDays(backward, -1);
+        }
+        return backward;
     }
+
     getHolidayName(date) {
         const m = date.getMonth() + 1;
         const d = date.getDate();
@@ -1310,13 +1339,10 @@ ${strings.map(s=>`<si><t xml:space="preserve">${esc(s)}</t></si>`).join('')}
 <Override PartName="/xl/styles.xml"              ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>`;
 
-    // Build ZIP using fflate (loaded below if needed) — fallback to simple blob approach
-    // Use JSZip-free approach: build a proper ZIP manually
     function strToU8(str) {
         return new TextEncoder().encode(str);
     }
 
-    // Simple ZIP builder (store, no compression)
     function buildZip(files) {
         const parts = [];
         const centralDir = [];
@@ -1330,7 +1356,7 @@ ${strings.map(s=>`<si><t xml:space="preserve">${esc(s)}</t></si>`).join('')}
             view.setUint32(0, 0x04034b50, true);
             view.setUint16(4, 20, true);
             view.setUint16(6, 0, true);
-            view.setUint16(8, 0, true);  // no compression
+            view.setUint16(8, 0, true);
             view.setUint16(10, 0, true);
             view.setUint16(12, 0, true);
             view.setUint32(14, crc, true);
