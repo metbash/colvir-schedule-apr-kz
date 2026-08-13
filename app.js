@@ -1,1 +1,4 @@
-[PYTHON_INJECT: app_js_v3]
+// === Colvir Schedule & APR Calculator — app.js ===
+
+// ─── Holidays Data ───────────────────────────────────────────────────────────
+const __HOLIDAYS_DATA__ = {"colvir":{"fixed":[{"month":1,"day":1,"name":"Новый год"},{"month":1,"day":2,"name":"Новый год"},{"month":1,"day":7,"name":"Православное Рождество"},{"month":3,"day":8,"name":"Международный женский день"},{"month":3,"day":21,"name":"Наурыз"},{"month":3,"day":22,"name":"Наурыз"},{"month":3,"day":23,"name":"Наурыз"},{"month":5,"day":1,"name":"Праздник единства народа"},{"month":5,"day":7,"name":"День защитника Отечества"},{"month":5,"day":9,"name":"День Победы"},{"month":7,"day":6,"name":"День столицы"},{"month":8,"day":30,"name":"День Конституции"},{"month":12,"day":1,"name":"День Первого Президента"},{"month":12,"day":16,"name":"День Независимости"},{"month":12,"day":17,"name":"День Независимости"}]}};
