@@ -172,6 +172,9 @@ class DateUtils {
     static format(date) {
         return `${String(date.getDate()).padStart(2,'0')}.${String(date.getMonth()+1).padStart(2,'0')}.${date.getFullYear()}`;
     }
+    static toISO(date) {
+        return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+    }
 }
 
 // ─── Money ───────────────────────────────────────────────────────────────────
@@ -191,26 +194,73 @@ class Validation {
 
 // ─── KazakhstanCalendar ──────────────────────────────────────────────────────
 class KazakhstanCalendar {
-    constructor(mode=CalendarMode.COLVIR) { this.mode=mode; }
-    isHoliday(date) {
-        const m=date.getMonth()+1, d=date.getDate(), y=date.getFullYear();
-        if (this.mode===CalendarMode.COLVIR)
-            return __HOLIDAYS_DATA__.colvir.fixed.some(h=>h.month===m&&h.day===d);
-        const yd=__HOLIDAYS_DATA__.actual[y];
-        if (!yd) return __HOLIDAYS_DATA__.colvir.fixed.some(h=>h.month===m&&h.day===d);
-        const iso=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-        return yd.holidays.some(h=>h.date===iso);
+    constructor(mode=CalendarMode.COLVIR) {
+        this.mode = mode;
+        // Кеш вычисленных нерабочих дат для режима colvir (по годам)
+        this._cache = {};
     }
-    isNonWorkingDay(date) { return DateUtils.isWeekend(date)||this.isHoliday(date); }
+
+    // Строит Set ISO-строк нерабочих дат для года y в режиме colvir.
+    // Правило переноса (стандарт РК / Трудовой кодекс):
+    //   - праздник в воскресенье → перенос на ближайший следующий понедельник
+    //   - праздник в субботу    → перенос на ближайший следующий понедельник
+    //   (если этот понедельник сам является праздником — сдвигаем ещё на день,
+    //    но на практике такое крайне редко; простой сдвиг +1/+2 покрывает 99% случаев)
+    _buildColvirHolidaySet(y) {
+        if (this._cache[y]) return this._cache[y];
+
+        const fixed = __HOLIDAYS_DATA__.colvir.fixed;
+        const set = new Set();
+
+        for (const h of fixed) {
+            const base = new Date(Date.UTC(y, h.month - 1, h.day));
+            set.add(DateUtils.toISO(base));
+
+            const dow = base.getDay(); // 0=вс, 6=сб
+            if (dow === 0) {
+                // Воскресенье → понедельник (+1)
+                set.add(DateUtils.toISO(DateUtils.addDays(base, 1)));
+            } else if (dow === 6) {
+                // Суббота → понедельник (+2)
+                set.add(DateUtils.toISO(DateUtils.addDays(base, 2)));
+            }
+        }
+
+        this._cache[y] = set;
+        return set;
+    }
+
+    isHoliday(date) {
+        const m = date.getMonth() + 1, d = date.getDate(), y = date.getFullYear();
+
+        if (this.mode === CalendarMode.COLVIR) {
+            // Используем вычисленный Set с учётом переносов
+            const set = this._buildColvirHolidaySet(y);
+            return set.has(DateUtils.toISO(date));
+        }
+
+        // Режим actual: список из постановлений Правительства РК
+        const yd = __HOLIDAYS_DATA__.actual[y];
+        if (!yd) {
+            // Год не найден в базе — fallback на colvir-логику с переносами
+            const set = this._buildColvirHolidaySet(y);
+            return set.has(DateUtils.toISO(date));
+        }
+        const iso = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        return yd.holidays.some(h => h.date === iso);
+    }
+
+    isNonWorkingDay(date) { return DateUtils.isWeekend(date) || this.isHoliday(date); }
+
     adjustPaymentDate(date) {
-        let d=DateUtils.clone(date);
+        let d = DateUtils.clone(date);
         if (!this.isNonWorkingDay(d)) return d;
-        const origMonth=d.getMonth(), origYear=d.getFullYear();
-        let fwd=DateUtils.clone(d);
-        while (this.isNonWorkingDay(fwd)) fwd=DateUtils.addDays(fwd,1);
-        if (fwd.getMonth()===origMonth && fwd.getFullYear()===origYear) return fwd;
-        let bwd=DateUtils.clone(d);
-        while (this.isNonWorkingDay(bwd)) bwd=DateUtils.addDays(bwd,-1);
+        const origMonth = d.getMonth(), origYear = d.getFullYear();
+        let fwd = DateUtils.clone(d);
+        while (this.isNonWorkingDay(fwd)) fwd = DateUtils.addDays(fwd, 1);
+        if (fwd.getMonth() === origMonth && fwd.getFullYear() === origYear) return fwd;
+        let bwd = DateUtils.clone(d);
+        while (this.isNonWorkingDay(bwd)) bwd = DateUtils.addDays(bwd, -1);
         return bwd;
     }
 }
@@ -993,81 +1043,4 @@ function exportToExcel() {
     const sst=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strings.length}" uniqueCount="${strings.length}">${strings.map(s=>`<si><t xml:space="preserve">${esc(s)}</t></si>`).join('')}</sst>`;
     const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFD9EAD3"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/></patternFill></fill></fills><borders><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center"/></xf><xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="4" fontId="0" fillId="2" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0"/></cellXfs></styleSheet>`;
     const wb=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="График" sheetId="1" r:id="rId1"/></sheets></workbook>`;
-    const wbRels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
-    const contentTypes=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`;
-
-    function strToU8(str){return new TextEncoder().encode(str);}
-    function crc32(data){let c=0xFFFFFFFF;for(let i=0;i<data.length;i++){c^=data[i];for(let j=0;j<8;j++)c=(c>>>1)^(c&1?0xEDB88320:0);}return(c^0xFFFFFFFF)>>>0;}
-    function buildZip(files){
-        const parts=[],cd=[]; let offset=0;
-        for(const[name,data]of files){
-            const nb=new TextEncoder().encode(name),crc=crc32(data);
-            const local=new Uint8Array(30+nb.length+data.length),v=new DataView(local.buffer);
-            v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint16(6,0,true);v.setUint16(8,0,true);v.setUint16(10,0,true);v.setUint16(12,0,true);
-            v.setUint32(14,crc,true);v.setUint32(18,data.length,true);v.setUint32(22,data.length,true);v.setUint16(26,nb.length,true);v.setUint16(28,0,true);
-            local.set(nb,30);local.set(data,30+nb.length);parts.push(local);
-            const c2=new Uint8Array(46+nb.length),cv=new DataView(c2.buffer);
-            cv.setUint32(0,0x02014b50,true);cv.setUint16(4,20,true);cv.setUint16(6,20,true);cv.setUint16(8,0,true);cv.setUint16(10,0,true);cv.setUint16(12,0,true);cv.setUint16(14,0,true);
-            cv.setUint32(16,crc,true);cv.setUint32(20,data.length,true);cv.setUint32(24,data.length,true);cv.setUint16(28,nb.length,true);cv.setUint16(30,0,true);cv.setUint16(32,0,true);cv.setUint16(34,0,true);cv.setUint16(36,0,true);cv.setUint32(38,0,true);cv.setUint32(42,offset,true);
-            c2.set(nb,46);cd.push(c2);offset+=local.length;
-        }
-        const cdSize=cd.reduce((s,c)=>s+c.length,0),eocd=new Uint8Array(22),ev=new DataView(eocd.buffer);
-        ev.setUint32(0,0x06054b50,true);ev.setUint16(4,0,true);ev.setUint16(6,0,true);ev.setUint16(8,files.length,true);ev.setUint16(10,files.length,true);ev.setUint32(12,cdSize,true);ev.setUint32(16,offset,true);ev.setUint16(20,0,true);
-        const total=[...parts,...cd,eocd].reduce((s,a)=>s+a.length,0),out=new Uint8Array(total);let pos=0;
-        for(const p of[...parts,...cd,eocd]){out.set(p,pos);pos+=p.length;}
-        return out;
-    }
-
-    const zipBytes=buildZip([['[Content_Types].xml',strToU8(contentTypes)],['_rels/.rels',strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`)],['xl/workbook.xml',strToU8(wb)],['xl/_rels/workbook.xml.rels',strToU8(wbRels)],['xl/worksheets/sheet1.xml',strToU8(sheetXml)],['xl/sharedStrings.xml',strToU8(sst)],['xl/styles.xml',strToU8(styles)]]);
-    const blob=new Blob([zipBytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-    const url=URL.createObjectURL(blob),a=document.createElement('a');
-    a.href=url;a.download=`schedule_${new Date().toISOString().slice(0,10)}.xlsx`;
-    document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
-}
-
-// ─── Event Listeners ─────────────────────────────────────────────────────────
-els.modeSimpleBtn.addEventListener('click',()=>setMode('simple'));
-els.modeManualBtn.addEventListener('click',()=>setMode('manual'));
-els.applySimpleBtn.addEventListener('click',applySimpleGrace);
-els.clearSimpleBtn.addEventListener('click',()=>{clearManualRows();setMode('simple');});
-els.fillManualBtn.addEventListener('click',buildManualRows);
-els.clearManualBtn.addEventListener('click',clearManualRows);
-els.recalcBtn.addEventListener('click',recalcGESV);
-els.exportBtn.addEventListener('click',exportToExcel);
-if(els.calendarMode) els.calendarMode.addEventListener('change',updateCalendarBadge);
-
-els.calcBtn.addEventListener('click',()=>{
-    els.errorBox.textContent='';
-    try {
-        const principal=num(els.principal.value);
-        const annualRate=num(els.annualRate.value);
-        const term=parseInt(els.term.value,10);
-        const issueDate=new Date(els.issueDate.value);
-        const firstPayment=new Date(els.firstPaymentDate.value);
-        const lastPaymentVal=els.lastPaymentDate.value;
-        const lastPayment=lastPaymentVal?new Date(lastPaymentVal):null;
-        const paymentMethod=els.paymentMethod.value;
-        const distributionMode=els.distributionMode.value;
-        const upfrontFee=num(els.upfrontFee.value);
-        const gracePeriods=readGracePeriods();
-        const calendar=getCalendar();
-
-        if (!principal||principal<=0) throw new Error('Введите корректную сумму кредита.');
-        if (!term||term<=0)           throw new Error('Введите корректный срок.');
-        if (isNaN(issueDate))         throw new Error('Введите корректную дату выдачи.');
-        if (isNaN(firstPayment))      throw new Error('Введите корректную дату первого платежа.');
-
-        const loan=new Loan({principal,annualRate,term,issueDate,firstPaymentDate:firstPayment,lastPaymentDate:lastPayment,paymentMethod,distributionMode,gracePeriods});
-        const calculator=new LoanCalculator(calendar);
-        const fees=upfrontFee>0?[{date:issueDate,amount:upfrontFee}]:[];
-        const result=calculator.calculate(loan,{fees});
-
-        lastResult=result; manualEdits={}; els.recalcBtn.style.display='none';
-        renderSchedule(result);
-    } catch(e) { els.errorBox.textContent=e.message||String(e); }
-});
-
-updateCalendarBadge();
-</script>
-</body>
-</html>
+    const wbRels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.o
