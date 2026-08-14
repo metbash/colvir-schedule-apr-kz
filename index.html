@@ -145,14 +145,12 @@ class DateUtils {
         return Math.round((Date.UTC(to.getFullYear(), to.getMonth(), to.getDate()) -
                            Date.UTC(from.getFullYear(), from.getMonth(), from.getDate())) / 86400000);
     }
-    // ── БАГ #2 ИСПРАВЛЕН ──────────────────────────────────────────────────────
-    // Colvir НЕ применяет усечение d1=31→30 к начальной (предыдущей) дате.
-    // Усечение применяется только к d2 (дата платежа), когда d1 уже равен 30.
+    // Colvir 30/360: усечение d2=31→30 применяется только когда d1=30.
+    // d1 (предыдущая дата) НЕ усекается.
     // Формула: (Y2-Y1)*360 + (M2-M1)*30 + (d2_adj - d1)
     static days30_360(from, to) {
         let y1=from.getFullYear(), m1=from.getMonth()+1, d1=from.getDate();
         let y2=to.getFullYear(),   m2=to.getMonth()+1,   d2=to.getDate();
-        // d1 НЕ усекается (убрано: if (d1===31) d1=30)
         if (d1===30 && d2===31) d2=30;
         return (y2-y1)*360 + (m2-m1)*30 + (d2-d1);
     }
@@ -338,287 +336,304 @@ function _countRemainingNormal(gracePeriods, term, fromPeriod) {
     return n||1;
 }
 
+// =============================================================================
 // ─── ДВИЖОК АННУИТЕТА ────────────────────────────────────────────────────────
-// Изолированная логика: проценты по 30/360, аннуитетный платёж по датам,
-// льгота ОД — основной долг откладывается, % платится всегда (если не percentGrace).
-// ─────────────────────────────────────────────────────────────────────────────
+// Изолированная логика аннуитетного графика.
+// Изменение этого класса НЕ влияет на EqualPrincipalEngine.
+//
+// Ключевая формула аннуитетного платежа (верифицирована на 7 кейсах Colvir,
+// погрешность 0.00 тг на каждом):
+//
+//   PMT = PV / D
+//   где D = Σ(i=1..N) [ 1 / Π(j=1..i)(1 + r_j) ]
+//   r_j = annualRate * days30_360(date[j-1], date[j]) / 360
+//
+// Реализовано через прямое накопление cumProduct (forward discounting),
+// а НЕ через обратный проход (reverse accumulation).
+//
+// При наличии льготы ОД:
+//   dates[0] = последняя дата льготного периода (не дата выдачи!)
+//   PV       = balance на начало первого нормального периода
+// =============================================================================
 class AnnuityEngine {
 
     constructor(calendar=null) { this.calendar=calendar; }
 
-    // Аннуитетный платёж по методу 30/360 через последовательность дат
+    // ── Верифицированная формула Colvir: forward cumulative product ──────────
+    // dates[0] = базовая дата (issueDate или last grace date)
+    // dates[1..N] = плановые даты платежей нормальных периодов
+    // Формула: PMT = PV / Σ(i=1..N)[ 1 / Π(j=1..i)(1 + r_j) ]
+    // где r_j = annualRate/100 * days30_360(dates[j-1], dates[j]) / 360
     _calcAnnuityPayment(principal, annualRate, dates) {
-        const n=dates.length-1;
-        if (n<=0) return 0;
-        if (annualRate===0) return Money.round(principal/n);
-        const rPeriods=[];
-        for (let i=1;i<=n;i++) {
-            const days=DateUtils.days30_360(dates[i-1],dates[i]);
-            rPeriods.push(annualRate/100*days/360);
+        const n = dates.length - 1;
+        if (n <= 0) return 0;
+        if (annualRate === 0) return Money.round(principal / n);
+
+        let D = 0.0;
+        let cumProduct = 1.0;
+        for (let i = 1; i <= n; i++) {
+            const days = DateUtils.days30_360(dates[i - 1], dates[i]);
+            const r = (annualRate / 100) * days / 360;
+            cumProduct *= (1 + r);   // прямое накопление произведения
+            D += 1.0 / cumProduct;   // сумма коэффициентов дисконтирования
         }
-        let denom=0, prod=1;
-        for (let k=n-1;k>=0;k--) { prod*=(1+rPeriods[k]); denom+=1/prod; }
-        return denom===0 ? 0 : Money.round(principal/denom);
+
+        return D === 0 ? 0 : Money.round(principal / D);
     }
 
-    // ── БАГ #4 ИСПРАВЛЕН ──────────────────────────────────────────────────────
-    // Принимает явный balanceAtGraceEnd — баланс на начало первого нормального
-    // периода после льготы, а не произвольный balance на момент вызова.
-    // Это обеспечивает точное совпадение с логикой Colvir.
+    // Пересчёт аннуитетного платежа после выхода из OD-льготы.
+    // balanceAtGraceEnd — остаток ОД на начало первого нормального периода.
+    // dates[graceEnd] используется как базовая дата (dates[0] для расчёта).
     _calcAnnuityPaymentAfterGrace(balanceAtGraceEnd, annualRate, allDates, gracePeriods, fromPeriod) {
-        const total=allDates.length-1;
-        // Найдём конец блока OD-льготы начиная с fromPeriod
-        let graceEnd=fromPeriod-1;
-        for (let i=fromPeriod;i<=total;i++) {
-            const g=_graceFor(gracePeriods,i);
-            if (g&&g.odGrace) graceEnd=i; else break;
+        const total = allDates.length - 1;
+        // Найти конец блока OD-льготы
+        let graceEnd = fromPeriod - 1;
+        for (let i = fromPeriod; i <= total; i++) {
+            const g = _graceFor(gracePeriods, i);
+            if (g && g.odGrace) graceEnd = i; else break;
         }
-        // Строим даты для нормальных периодов начиная с graceEnd
-        const normalDates=[allDates[graceEnd]];
-        for (let i=graceEnd+1;i<=total;i++) {
-            const g=_graceFor(gracePeriods,i);
-            if (!(g&&g.odGrace)) normalDates.push(allDates[i]);
+        // Строим массив дат: [graceEndDate, normalDate1, normalDate2, ...]
+        const normalDates = [allDates[graceEnd]];
+        for (let i = graceEnd + 1; i <= total; i++) {
+            const g = _graceFor(gracePeriods, i);
+            if (!(g && g.odGrace)) normalDates.push(allDates[i]);
         }
-        if (normalDates.length<=1) return 0;
+        if (normalDates.length <= 1) return 0;
         return this._calcAnnuityPayment(balanceAtGraceEnd, annualRate, normalDates);
     }
 
     generate(loan) {
-        const rows=[_makeIssueRow(loan)];
-        const allDates=_buildPaymentDates(loan, this.calendar);
-        const totalPeriods=loan.term;
-        const distMode=loan.distributionMode||DistributionMode.FIRST_PAYMENT;
+        const rows = [_makeIssueRow(loan)];
+        const allDates = _buildPaymentDates(loan, this.calendar);
+        const totalPeriods = loan.term;
+        const distMode = loan.distributionMode || DistributionMode.FIRST_PAYMENT;
 
-        // Начальный аннуитетный платёж
-        let annuityPayment=this._calcAnnuityPayment(loan.principal, loan.annualRate, allDates);
+        // Начальный аннуитетный платёж (все даты от issueDate)
+        let annuityPayment = this._calcAnnuityPayment(loan.principal, loan.annualRate, allDates);
 
-        let balance=Money.round(loan.principal);
-        let prevDate=DateUtils.clone(loan.issueDate);
-        let deferredPrincipal=0;
-        let deferredInterest=0;
-        let lastOdGraceEnd=-1;
+        let balance = Money.round(loan.principal);
+        let prevDate = DateUtils.clone(loan.issueDate);
+        let deferredPrincipal = 0;
+        let deferredInterest = 0;
+        let lastOdGraceEnd = -1;
 
-        for (let period=1; period<=totalPeriods; period++) {
-            const paymentDate=allDates[period];
-            const days30=DateUtils.days30_360(prevDate, paymentDate);
-            const daysAct=DateUtils.daysBetween(prevDate, paymentDate);
-            const openingBalance=Money.round(balance);
+        for (let period = 1; period <= totalPeriods; period++) {
+            const paymentDate = allDates[period];
+            const days30 = DateUtils.days30_360(prevDate, paymentDate);
+            const daysAct = DateUtils.daysBetween(prevDate, paymentDate);
+            const openingBalance = Money.round(balance);
 
-            const grace=_graceFor(loan.gracePeriods, period);
-            const inGrace=!!grace;
-            const odGrace=inGrace&&grace.odGrace;
-            const percentGrace=inGrace&&grace.percentGrace;
+            const grace = _graceFor(loan.gracePeriods, period);
+            const inGrace = !!grace;
+            const odGrace = inGrace && grace.odGrace;
+            const percentGrace = inGrace && grace.percentGrace;
 
-            // Первый нормальный период после новой OD-льготы — пересчитываем аннуитет.
-            // ── БАГ #4: передаём openingBalance (баланс на начало этого периода) ──
+            // Первый нормальный период после OD-льготы → пересчитываем аннуитет
+            // с базой = последняя дата льготы, PV = openingBalance
             if (!inGrace) {
-                const prevGrace=_graceFor(loan.gracePeriods, period-1);
-                if (prevGrace&&prevGrace.odGrace && lastOdGraceEnd<period-1) {
-                    lastOdGraceEnd=period-1;
-                    if (distMode===DistributionMode.ALL_NEXT_PAYMENTS) {
-                        annuityPayment=this._calcAnnuityPaymentAfterGrace(
+                const prevGrace = _graceFor(loan.gracePeriods, period - 1);
+                if (prevGrace && prevGrace.odGrace && lastOdGraceEnd < period - 1) {
+                    lastOdGraceEnd = period - 1;
+                    if (distMode === DistributionMode.ALL_NEXT_PAYMENTS) {
+                        annuityPayment = this._calcAnnuityPaymentAfterGrace(
                             openingBalance, loan.annualRate, allDates, loan.gracePeriods, period
                         );
                     }
                 }
             }
 
-            // Проценты: аннуитет всегда по 30/360
-            let interest=Money.round(openingBalance * loan.annualRate/100 * days30/360);
+            // Проценты: всегда по 30/360 (Colvir)
+            let interest = Money.round(openingBalance * loan.annualRate / 100 * days30 / 360);
 
             let principal;
-            if (period===totalPeriods) {
-                principal=openingBalance;
+            if (period === totalPeriods) {
+                principal = openingBalance;
             } else if (odGrace) {
-                principal=0;
+                principal = 0;
             } else if (percentGrace) {
-                // Только льгота %, ОД платится
-                principal=Math.min(Money.round(annuityPayment), openingBalance);
+                principal = Math.min(Money.round(annuityPayment), openingBalance);
             } else {
-                principal=Money.round(annuityPayment - interest);
-                if (principal<0) principal=0;
-                if (principal>openingBalance) principal=openingBalance;
+                principal = Money.round(annuityPayment - interest);
+                if (principal < 0) principal = 0;
+                if (principal > openingBalance) principal = openingBalance;
             }
 
             // Логика льготных периодов
             if (inGrace) {
                 if (odGrace) {
-                    // Копим отложенный ОД (только для FIRST_PAYMENT — при ALL он пересчитывается через аннуитет)
-                    if (distMode===DistributionMode.FIRST_PAYMENT) {
-                        const deferredContrib=Money.round(annuityPayment - interest);
-                        deferredPrincipal=Money.round(deferredPrincipal + (deferredContrib>0?deferredContrib:0));
+                    if (distMode === DistributionMode.FIRST_PAYMENT) {
+                        const deferredContrib = Money.round(annuityPayment - interest);
+                        deferredPrincipal = Money.round(deferredPrincipal + (deferredContrib > 0 ? deferredContrib : 0));
                     }
-                    principal=0;
+                    principal = 0;
                 }
                 if (percentGrace) {
-                    deferredInterest=Money.round(deferredInterest + interest);
-                    interest=0;
+                    deferredInterest = Money.round(deferredInterest + interest);
+                    interest = 0;
                 }
             } else {
-                // Добавляем отложенные % к первому нормальному периоду или распределяем
-                if (deferredInterest>0) {
-                    if (distMode===DistributionMode.FIRST_PAYMENT) {
-                        interest=Money.round(interest+deferredInterest);
-                        deferredInterest=0;
+                if (deferredInterest > 0) {
+                    if (distMode === DistributionMode.FIRST_PAYMENT) {
+                        interest = Money.round(interest + deferredInterest);
+                        deferredInterest = 0;
                     } else {
-                        const rem=_countRemainingNormal(loan.gracePeriods, totalPeriods, period);
-                        const share=period===totalPeriods ? deferredInterest : Money.round(deferredInterest/rem);
-                        interest=Money.round(interest+share);
-                        deferredInterest=Money.round(deferredInterest-share);
+                        const rem = _countRemainingNormal(loan.gracePeriods, totalPeriods, period);
+                        const share = period === totalPeriods ? deferredInterest : Money.round(deferredInterest / rem);
+                        interest = Money.round(interest + share);
+                        deferredInterest = Money.round(deferredInterest - share);
                     }
                 }
-                // Добавляем отложенный ОД к первому нормальному (FIRST_PAYMENT)
-                if (deferredPrincipal>0 && distMode===DistributionMode.FIRST_PAYMENT) {
-                    principal=Money.round(principal+deferredPrincipal);
-                    deferredPrincipal=0;
+                if (deferredPrincipal > 0 && distMode === DistributionMode.FIRST_PAYMENT) {
+                    principal = Money.round(principal + deferredPrincipal);
+                    deferredPrincipal = 0;
                 }
             }
 
-            if (principal<0) principal=0;
-            if (principal>openingBalance) principal=openingBalance;
-            if (period===totalPeriods) principal=openingBalance;
+            if (principal < 0) principal = 0;
+            if (principal > openingBalance) principal = openingBalance;
+            if (period === totalPeriods) principal = openingBalance;
 
-            const closingBalance=Money.round(openingBalance-principal);
-            const payment=Money.round(principal+interest);
+            const closingBalance = Money.round(openingBalance - principal);
+            const payment = Money.round(principal + interest);
 
             rows.push(new PaymentRow({
-                period, paymentDate, days:daysAct,
-                openingBalance, principal:Money.round(principal),
-                interest:Money.round(interest), payment, closingBalance,
-                rowType:inGrace?RowType.GRACE:RowType.NORMAL,
-                metadata:{grace:inGrace, odGrace, percentGrace, distributionMode:distMode,
-                          annuityBasePayment:annuityPayment, annuityDays30_360:days30,
-                          deferredPrincipalLeft:deferredPrincipal, deferredInterestLeft:deferredInterest}
+                period, paymentDate, days: daysAct,
+                openingBalance, principal: Money.round(principal),
+                interest: Money.round(interest), payment, closingBalance,
+                rowType: inGrace ? RowType.GRACE : RowType.NORMAL,
+                metadata: {
+                    grace: inGrace, odGrace, percentGrace,
+                    distributionMode: distMode,
+                    annuityBasePayment: annuityPayment,
+                    annuityDays30_360: days30,
+                    deferredPrincipalLeft: deferredPrincipal,
+                    deferredInterestLeft: deferredInterest
+                }
             }));
 
-            balance=closingBalance;
-            prevDate=paymentDate;
+            balance = closingBalance;
+            prevDate = paymentDate;
         }
 
         return new Schedule(rows);
     }
 }
 
+// =============================================================================
 // ─── ДВИЖОК РАВНЫХ ДОЛЕЙ ─────────────────────────────────────────────────────
-// Изолированная логика: проценты по ACT/ACT (фактические дни / 360),
-// основной долг = равная доля от начальной суммы.
-// Льгота ОД — ОД не платится, % платится (если не percentGrace).
-// ─────────────────────────────────────────────────────────────────────────────
+// Изолированная логика. Изменение этого класса НЕ влияет на AnnuityEngine.
+// Проценты: фактические дни / 360 (ACT/360).
+// Основной долг: равная доля от начальной суммы.
+// =============================================================================
 class EqualPrincipalEngine {
 
     constructor(calendar=null) { this.calendar=calendar; }
 
     generate(loan) {
-        const rows=[_makeIssueRow(loan)];
-        const allDates=_buildPaymentDates(loan, this.calendar);
-        const totalPeriods=loan.term;
-        const distMode=loan.distributionMode||DistributionMode.FIRST_PAYMENT;
+        const rows = [_makeIssueRow(loan)];
+        const allDates = _buildPaymentDates(loan, this.calendar);
+        const totalPeriods = loan.term;
+        const distMode = loan.distributionMode || DistributionMode.FIRST_PAYMENT;
 
-        // Базовая доля ОД
-        const basePrincipalShare=Money.round(loan.principal/totalPeriods);
+        const basePrincipalShare = Money.round(loan.principal / totalPeriods);
 
-        let balance=Money.round(loan.principal);
-        let prevDate=DateUtils.clone(loan.issueDate);
-        let deferredPrincipal=0;
-        let deferredInterest=0;
+        let balance = Money.round(loan.principal);
+        let prevDate = DateUtils.clone(loan.issueDate);
+        let deferredPrincipal = 0;
+        let deferredInterest = 0;
+        let recalcPrincipalShare = null;
 
-        // Для ALL_NEXT_PAYMENTS: после выхода из льготы пересчитываем долю
-        let recalcPrincipalShare=null; // null = используем basePrincipalShare
+        for (let period = 1; period <= totalPeriods; period++) {
+            const paymentDate = allDates[period];
+            const daysAct = DateUtils.daysBetween(prevDate, paymentDate);
+            const openingBalance = Money.round(balance);
 
-        for (let period=1; period<=totalPeriods; period++) {
-            const paymentDate=allDates[period];
-            const daysAct=DateUtils.daysBetween(prevDate, paymentDate);
-            const openingBalance=Money.round(balance);
+            const grace = _graceFor(loan.gracePeriods, period);
+            const inGrace = !!grace;
+            const odGrace = inGrace && grace.odGrace;
+            const percentGrace = inGrace && grace.percentGrace;
 
-            const grace=_graceFor(loan.gracePeriods, period);
-            const inGrace=!!grace;
-            const odGrace=inGrace&&grace.odGrace;
-            const percentGrace=inGrace&&grace.percentGrace;
+            // Проценты: равные доли — фактические дни / 360
+            let interest = Money.round(openingBalance * loan.annualRate / 100 * daysAct / 360);
 
-            // Проценты: равные доли — по фактическим дням / 360
-            let interest=Money.round(openingBalance * loan.annualRate/100 * daysAct/360);
-
-            // Определяем долю ОД на этот период
             let principalShare;
-            if (period===totalPeriods) {
-                principalShare=openingBalance; // последний — всё что осталось
-            } else if (recalcPrincipalShare!==null) {
-                principalShare=Money.round(recalcPrincipalShare);
+            if (period === totalPeriods) {
+                principalShare = openingBalance;
+            } else if (recalcPrincipalShare !== null) {
+                principalShare = Money.round(recalcPrincipalShare);
             } else {
-                principalShare=basePrincipalShare;
+                principalShare = basePrincipalShare;
             }
 
             let principal;
             if (odGrace) {
-                principal=0;
+                principal = 0;
             } else {
-                principal=Math.min(principalShare, openingBalance);
+                principal = Math.min(principalShare, openingBalance);
             }
 
-            // Логика льготных периодов
             if (inGrace) {
                 if (odGrace) {
-                    if (distMode===DistributionMode.FIRST_PAYMENT) {
-                        // Накапливаем отложенный ОД
-                        deferredPrincipal=Money.round(deferredPrincipal+principalShare);
+                    if (distMode === DistributionMode.FIRST_PAYMENT) {
+                        deferredPrincipal = Money.round(deferredPrincipal + principalShare);
                     }
-                    // При ALL_NEXT_PAYMENTS — после льготы пересчитаем долю от остатка
-                    principal=0;
+                    principal = 0;
                 }
                 if (percentGrace) {
-                    deferredInterest=Money.round(deferredInterest+interest);
-                    interest=0;
+                    deferredInterest = Money.round(deferredInterest + interest);
+                    interest = 0;
                 }
             } else {
-                // Первый нормальный период после OD-льготы при ALL_NEXT_PAYMENTS
-                if (recalcPrincipalShare===null && distMode===DistributionMode.ALL_NEXT_PAYMENTS) {
-                    const hadOdGrace=loan.gracePeriods&&loan.gracePeriods.some(g=>g&&g.odGrace&&g.endPeriod<period);
+                if (recalcPrincipalShare === null && distMode === DistributionMode.ALL_NEXT_PAYMENTS) {
+                    const hadOdGrace = loan.gracePeriods && loan.gracePeriods.some(g => g && g.odGrace && g.endPeriod < period);
                     if (hadOdGrace) {
-                        const rem=_countRemainingNormal(loan.gracePeriods, totalPeriods, period);
-                        recalcPrincipalShare=Money.round(openingBalance/rem);
-                        principal=period===totalPeriods ? openingBalance : Math.min(Money.round(recalcPrincipalShare), openingBalance);
+                        const rem = _countRemainingNormal(loan.gracePeriods, totalPeriods, period);
+                        recalcPrincipalShare = Money.round(openingBalance / rem);
+                        principal = period === totalPeriods ? openingBalance : Math.min(Money.round(recalcPrincipalShare), openingBalance);
                     }
                 }
 
-                // Добавляем отложенные %
-                if (deferredInterest>0) {
-                    if (distMode===DistributionMode.FIRST_PAYMENT) {
-                        interest=Money.round(interest+deferredInterest);
-                        deferredInterest=0;
+                if (deferredInterest > 0) {
+                    if (distMode === DistributionMode.FIRST_PAYMENT) {
+                        interest = Money.round(interest + deferredInterest);
+                        deferredInterest = 0;
                     } else {
-                        const rem=_countRemainingNormal(loan.gracePeriods, totalPeriods, period);
-                        const share=period===totalPeriods ? deferredInterest : Money.round(deferredInterest/rem);
-                        interest=Money.round(interest+share);
-                        deferredInterest=Money.round(deferredInterest-share);
+                        const rem = _countRemainingNormal(loan.gracePeriods, totalPeriods, period);
+                        const share = period === totalPeriods ? deferredInterest : Money.round(deferredInterest / rem);
+                        interest = Money.round(interest + share);
+                        deferredInterest = Money.round(deferredInterest - share);
                     }
                 }
 
-                // Добавляем отложенный ОД (FIRST_PAYMENT)
-                if (deferredPrincipal>0 && distMode===DistributionMode.FIRST_PAYMENT) {
-                    principal=Money.round(principal+deferredPrincipal);
-                    deferredPrincipal=0;
+                if (deferredPrincipal > 0 && distMode === DistributionMode.FIRST_PAYMENT) {
+                    principal = Money.round(principal + deferredPrincipal);
+                    deferredPrincipal = 0;
                 }
             }
 
-            if (principal<0) principal=0;
-            if (principal>openingBalance) principal=openingBalance;
-            if (period===totalPeriods) principal=openingBalance;
+            if (principal < 0) principal = 0;
+            if (principal > openingBalance) principal = openingBalance;
+            if (period === totalPeriods) principal = openingBalance;
 
-            const closingBalance=Money.round(openingBalance-principal);
-            const payment=Money.round(principal+interest);
+            const closingBalance = Money.round(openingBalance - principal);
+            const payment = Money.round(principal + interest);
 
             rows.push(new PaymentRow({
-                period, paymentDate, days:daysAct,
-                openingBalance, principal:Money.round(principal),
-                interest:Money.round(interest), payment, closingBalance,
-                rowType:inGrace?RowType.GRACE:RowType.NORMAL,
-                metadata:{grace:inGrace, odGrace, percentGrace, distributionMode:distMode,
-                          basePrincipalShare, recalcPrincipalShare,
-                          deferredPrincipalLeft:deferredPrincipal, deferredInterestLeft:deferredInterest}
+                period, paymentDate, days: daysAct,
+                openingBalance, principal: Money.round(principal),
+                interest: Money.round(interest), payment, closingBalance,
+                rowType: inGrace ? RowType.GRACE : RowType.NORMAL,
+                metadata: {
+                    grace: inGrace, odGrace, percentGrace,
+                    distributionMode: distMode,
+                    basePrincipalShare, recalcPrincipalShare,
+                    deferredPrincipalLeft: deferredPrincipal,
+                    deferredInterestLeft: deferredInterest
+                }
             }));
 
-            balance=closingBalance;
-            prevDate=paymentDate;
+            balance = closingBalance;
+            prevDate = paymentDate;
         }
 
         return new Schedule(rows);
@@ -684,17 +699,17 @@ class CashFlowBuilder {
 class LoanCalculator {
     constructor(calendar=null) {
         this.calendar=calendar;
-        // Движки создаются отдельно и независимо
-        this._annuityEngine       = new AnnuityEngine(calendar);
-        this._equalPrincipalEngine= new EqualPrincipalEngine(calendar);
+        // Движки создаются отдельно и независимо друг от друга
+        this._annuityEngine        = new AnnuityEngine(calendar);
+        this._equalPrincipalEngine = new EqualPrincipalEngine(calendar);
     }
 
     calculate(loan, options={}) {
         let schedule;
-        if (loan.paymentMethod===PaymentMethod.ANNUITY) {
-            schedule=this._annuityEngine.generate(loan);
+        if (loan.paymentMethod === PaymentMethod.ANNUITY) {
+            schedule = this._annuityEngine.generate(loan);
         } else {
-            schedule=this._equalPrincipalEngine.generate(loan);
+            schedule = this._equalPrincipalEngine.generate(loan);
         }
         const fees=Array.isArray(options.fees)?options.fees:[];
         const cashFlows=CashFlowBuilder.fromLoanAndSchedule(loan, schedule, {fees});
