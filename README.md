@@ -1,2 +1,3 @@
-# colvir-schedule-apr-kz
-Colvir Schedule &amp; APR Calculator (KZ)
+# Colvir Schedule & APR Calculator (KZ)
+
+Откройте `index.html` в браузере — никаких серверов не нужно.
