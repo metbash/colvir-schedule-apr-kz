@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Colvir Restructuring Calculator (KZ)</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+    <h1>Калькулятор реструктуризации (Colvir KZ)</h1>
+    <div style="text-align:right; margin-bottom:12px;">
+        <a href="index.html" style="color:var(--color-primary); text-decoration:none;">← Обычный калькулятор</a>
+    </div>
+    <div class="grid">
+        <!-- ── Левая панель (параметры реструктуризации) ── -->
+        <div class="card">
+            <div class="section-title">Параметры реструктуризации</div>
+
+            <label>Остаток ОД на дату реструктуризации, тг</label>
+            <input id="principalBalance" type="number" value="0" step="0.01" min="0">
+            <div class="subtle" style="margin-top:4px;">
+            Непросроченная часть основного долга на дату реструктуризации.
+            </div>
+
+            <label>Просроченный ОД, тг</label>
+            <input id="overduePrincipal" type="number" value="0" step="0.01" min="0">
+            <div class="subtle" style="margin-top:4px;">
+                Включается в новую базу ОД и участвует в новом начислении вознаграждения.
+            </div>
+
+            <label>Просроченное вознаграждение, тг</label>
+            <input id="overdueInterest" type="number" value="0" step="0.01" min="0">
+            <div class="subtle" style="margin-top:4px;">
+                  Не увеличивает основной долг. Будет добавлено к первому платежу или распределено после льготы.
+            </div>
+
+            <label>Дата начала новой фазы (эффективная дата)</label>
+            <input id="effectiveDate" type="date" value="2026-06-30">
+
+            <label>Первый новый платёж</label>
+            <input id="firstNewPaymentDate" type="date" value="2026-10-30">
+
+            <label>Новая дата окончания</label>
+            <input id="newLastPaymentDate" type="date" value="2028-09-30">
+
+            <label>Ставка, % годовых</label>
+            <input id="annualRate" type="number" value="20" step="0.01">
+
+            <label>Метод погашения</label>
+            <select id="paymentMethod">
+                <option value="EQUAL_PRINCIPAL">Равные части ОД</option>
+                <option value="ANNUITY" selected>Аннуитет</option>
+            </select>
+
+            <label>Режим распределения отложенного платежа</label>
+            <select id="distributionMode">
+                <option value="ALL_NEXT_PAYMENTS" selected>На все предстоящие платежи</option>
+                <option value="FIRST_PAYMENT">На первый предстоящий платеж</option>
+            </select>
+
+            <div style="margin-top:20px;" class="section-title">Льготные периоды новой фазы</div>
+
+<div class="subtle" style="margin-bottom:10px;">
+    Льгота применяется с первого периода нового графика. Проценты при льготе по вознаграждению начисляются, но переносятся согласно выбранному режиму распределения.
+</div>
+
+<div class="row-3">
+    <div>
+        <label>Льготных месяцев</label>
+        <input id="graceMonths" type="number" min="0" step="1" value="0">
+    </div>
+
+    <div>
+        <label>Льгота по ОД</label>
+        <div class="check-wrap">
+            <input id="gracePrincipal" type="checkbox" checked>
+        </div>
+    </div>
+
+    <div>
+        <label>Льгота по %</label>
+        <div class="check-wrap">
+            <input id="graceInterest" type="checkbox">
+        </div>
+    </div>
+</div>
+
+<label style="margin-top:14px;">Распределение просроченного вознаграждения</label>
+<select id="overdueInterestDistribution">
+    <option value="ALL_AFTER_GRACE" selected>
+        На все платежи после льготного периода
+    </option>
+    <option value="ALL_NEXT_PAYMENTS">
+        На все предстоящие платежи, включая льготные
+    </option>
+    <option value="FIRST_PAYMENT">
+        Полностью на первый предстоящий платеж
+    </option>
+    <option value="EXCLUDE">
+        Не включать в новый график
+    </option>
+</select>
+
+            <label style="margin-top:14px;">Единоразовая комиссия, тг <span style="color:#667085;font-weight:400;">(+ГЭСВ)</span></label>
+            <input id="upfrontFee" type="number" value="0" step="0.01" min="0">
+
+            <button id="calcBtn" style="margin-top:16px;">Рассчитать график реструктуризации</button>
+            <div id="errorBox" class="error"></div>
+        </div>
+
+        <!-- ── Правая панель (график) ── -->
+        <div class="card">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
+                <div class="section-title" style="margin-bottom:0;">График платежей (реструктуризация)</div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button id="recalcBtn" class="recalc-btn" type="button" style="width:auto; margin-top:0; padding:8px 14px; font-size:13px; display:none;">↺ Пересчитать ГЭСВ</button>
+                    <button id="exportBtn" class="export-btn" type="button" style="width:auto; margin-top:0; padding:8px 18px; font-size:13px;">⬇ Экспорт в Excel</button>
+                </div>
+            </div>
+            <div class="edit-hint" id="editHint" style="display:none;">💡 Ячейки выделенные синим — редактируемые (дата, ОД, вознаграждение). После редактирования нажмите «↺ Пересчитать ГЭСВ</div>
+            <div class="table-wrap">
+                <table id="scheduleTable">
+                    <thead><tr>
+                        <th>#</th>
+                        <th>Дата платежа</th>
+                        <th>Сумма платежа</th>
+                        <th>Вознаграждение</th>
+                        <th>Основной долг</th>
+                        <th>Остаток ОД</th>
+                        <th>Кол-во дней</th>
+                        <th>Тип</th>
+                    </tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="summary" id="summary"></div>
+        </div>
+    </div>
+</div>
+<script>
+// =============================================================================
+// Colvir Restructuring Calculator (KZ)
+// Отдельный движок для реструктуризации действующих договоров
+// =============================================================================
+
+// ─── Holidays Data (дублируем из index.html для автономности) ─────────────────
+const __HOLIDAYS_DATA__ = {"colvir":{"fixed":[{"month":1,"day":1,"name":"Новый год"},{"month":1,"day":2,"name":"Новый год"},{"month":1,"day":7,"name":"Рождество"},{"month":3,"day":8,"name":"Международный женский день"},{"month":3,"day":21,"name":"Наурыз мейрамы"},{"month":3,"day":22,"name":"Наурыз мейрамы"},{"month":3,"day":23,"name":"Наурыз мейрамы"},{"month":5,"day":1,"name":"Праздник единства народа Казахстана"},{"month":5,"day":7,"name":"День защитника Отечества"},{"month":5,"day":9,"name":"День Победы"},{"month":7,"day":6,"name":"День столицы"},{"month":8,"day":30,"name":"День Конституции Республики Казахстан"},{"month":10,"day":25,"name":"День Республики Казахстан"},{"month":12,"day":1,"name":"День Первого Президента"},{"month":12,"day":16,"name":"День Независимости"}]},"actual":{"2023":{"holidays":[{"date":"2023-01-01","name":"Новый год"},{"date":"2023-01-02","name":"Новый год"},{"date":"2023-01-03","name":"Новый год (перенос с 01.01 вс)"},{"date":"2023-01-07","name":"Православное Рождество"},{"date":"2023-03-08","name":"Международный женский день"},{"date":"2023-03-21","name":"Наурыз мейрамы"},{"date":"2023-03-22","name":"Наурыз мейрамы"},{"date":"2023-03-23","name":"Наурыз мейрамы"},{"date":"2023-05-01","name":"Праздник единства народа Казахстана"},{"date":"2023-05-07","name":"День защитника Отечества"},{"date":"2023-05-08","name":"День защитника Отечества (перенос с 07.05 вс)"},{"date":"2023-05-09","name":"День Победы"},{"date":"2023-06-28","name":"Курбан-айт"},{"date":"2023-07-06","name":"День столицы"},{"date":"2023-08-30","name":"День Конституции Республики Казахстан"},{"date":"2023-10-25","name":"День Республики Казахстан"},{"date":"2023-12-16","name":"День Независимости"},{"date":"2023-12-18","name":"День Независимости (перенос с 16.12 сб)"}],"transfers":[]},"2024":{"holidays":[{"date":"2024-01-01","name":"Новый год"},{"date":"2024-01-02","name":"Новый год"},{"date":"2024-01-07","name":"Православное Рождество"},{"date":"2024-03-08","name":"Международный женский день"},{"date":"2024-03-21","name":"Наурыз мейрамы"},{"date":"2024-03-22","name":"Наурыз мейрамы"},{"date":"2024-03-23","name":"Наурыз мейрамы"},{"date":"2024-03-25","name":"Наурыз мейрамы (перенос с 23.03 сб)"},{"date":"2024-05-01","name":"Праздник единства народа Казахстана"},{"date":"2024-05-07","name":"День защитника Отечества"},{"date":"2024-05-09","name":"День Победы"},{"date":"2024-06-16","name":"Курбан-айт"},{"date":"2024-07-06","name":"День столицы"},{"date":"2024-07-08","name":"День столицы (перенос с 06.07 сб)"},{"date":"2024-08-30","name":"День Конституции Республики Казахстан"},{"date":"2024-10-25","name":"День Республики Казахстан"},{"date":"2024-12-16","name":"День Независимости"}],"transfers":[]},"2025":{"holidays":[{"date":"2025-01-01","name":"Новый год"},{"date":"2025-01-02","name":"Новый год"},{"date":"2025-03-08","name":"Международный женский день"},{"date":"2025-03-21","name":"Наурыз мейрамы"},{"date":"2025-03-22","name":"Наурыз мейрамы"},{"date":"2025-03-23","name":"Наурыз мейрамы"},{"date":"2025-03-24","name":"Наурыз мейрамы (перенос с 22.03 сб)"},{"date":"2025-03-25","name":"Наурыз мейрамы (перенос с 23.03 вс)"},{"date":"2025-05-01","name":"Праздник единства народа Казахстана"},{"date":"2025-05-07","name":"День защитника Отечества"},{"date":"2025-05-09","name":"День Победы"},{"date":"2025-06-06","name":"Курбан-айт"},{"date":"2025-07-06","name":"День столицы"},{"date":"2025-07-07","name":"День столицы (перенос с 06.07 вс)"},{"date":"2025-08-30","name":"День Конституции Республики Казахстан"},{"date":"2025-09-01","name":"День Конституции (перенос с 30.08 сб)"},{"date":"2025-10-25","name":"День Республики Казахстан"},{"date":"2025-12-16","name":"День Независимости"},{"date":"2025-12-17","name":"День Независимости"}],"transfers":[]},"2026":{"holidays":[{"date":"2026-01-01","name":"Новый год"},{"date":"2026-01-02","name":"Новый год"},{"date":"2026-03-08","name":"Международный женский день"},{"date":"2026-03-09","name":"Международный женский день (перенос с 08.03 вс)"},{"date":"2026-03-21","name":"Наурыз мейрамы"},{"date":"2026-03-22","name":"Наурыз мейрамы"},{"date":"2026-03-23","name":"Наурыз мейрамы"},{"date":"2026-03-24","name":"Наурыз мейрамы (перенос с 21.03 сб)"},{"date":"2026-03-25","name":"Наурыз мейрамы (перенос с 22.03 вс)"},{"date":"2026-05-01","name":"Праздник единства народа Казахстана"},{"date":"2026-05-07","name":"День защитника Отечества"},{"date":"2026-05-09","name":"День Победы"},{"date":"2026-05-11","name":"День Победы (перенос с 09.05 сб)"},{"date":"2026-05-27","name":"Курбан-айт"},{"date":"2026-07-06","name":"День столицы"},{"date":"2026-10-25","name":"День Республики Казахстан"},{"date":"2026-10-26","name":"День Республики (перенос с 25.10 вс)"},{"date":"2026-12-16","name":"День Независимости"}],"transfers":[]},"2027":{"holidays":[{"date":"2027-01-01","name":"Новый год"},{"date":"2027-01-02","name":"Новый год"},{"date":"2027-01-04","name":"Новый год (перенос с 02.01 сб)"},{"date":"2027-01-07","name":"Православное Рождество"},{"date":"2027-03-08","name":"Международный женский день"},{"date":"2027-03-21","name":"Наурыз мейрамы"},{"date":"2027-03-22","name":"Наурыз мейрамы"},{"date":"2027-03-23","name":"Наурыз мейрамы"},{"date":"2027-03-24","name":"Наурыз мейрамы (перенос с 21.03 вс)"},{"date":"2027-05-01","name":"Праздник единства народа Казахстана"},{"date":"2027-05-03","name":"Праздник единства (перенос с 01.05 сб)"},{"date":"2027-05-07","name":"День защитника Отечества"},{"date":"2027-05-09","name":"День Победы"},{"date":"2027-05-10","name":"День Победы (перенос с 09.05 вс)"},{"date":"2027-05-27","name":"Курбан-айт"},{"date":"2027-07-06","name":"День столицы"},{"date":"2027-10-25","name":"День Республики Казахстан"},{"date":"2027-12-16","name":"День Независимости"}],"transfers":[]},"2028":{"holidays":[{"date":"2028-01-01","name":"Новый год"},{"date":"2028-01-02","name":"Новый год"},{"date":"2028-01-03","name":"Новый год (перенос с 01.01 сб)"},{"date":"2028-01-04","name":"Новый год (перенос с 02.01 вс)"},{"date":"2028-01-07","name":"Православное Рождество"},{"date":"2028-03-08","name":"Международный женский день"},{"date":"2028-03-21","name":"Наурыз мейрамы"},{"date":"2028-03-22","name":"Наурыз мейрамы"},{"date":"2028-03-23","name":"Наурыз мейрамы"},{"date":"2028-05-01","name":"Праздник единства народа Казахстана"},{"date":"2028-05-05","name":"Курбан-айт"},{"date":"2028-05-07","name":"День защитника Отечества"},{"date":"2028-05-08","name":"День защитника Отечества (перенос с 07.05 вс)"},{"date":"2028-05-09","name":"День Победы"},{"date":"2028-07-06","name":"День столицы"},{"date":"2028-10-25","name":"День Республики Казахстан"},{"date":"2028-12-16","name":"День Независимости"},{"date":"2028-12-18","name":"День Независимости (перенос с 16.12 сб)"}],"transfers":[]}}};
+const __COLVIR_TRANSFERS__ = Object.freeze({});
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+const PaymentMethod = Object.freeze({ ANNUITY: "ANNUITY", EQUAL_PRINCIPAL: "EQUAL_PRINCIPAL" });
+const RowType       = Object.freeze({ NORMAL: "NORMAL", GRACE: "GRACE" });
+const DistributionMode = Object.freeze({ FIRST_PAYMENT: "FIRST_PAYMENT", ALL_NEXT_PAYMENTS: "ALL_NEXT_PAYMENTS" });
+const CalendarMode  = Object.freeze({ COLVIR: "colvir", ACTUAL: "actual" });
+const APR           = Object.freeze({ BASIS_DAYS: 365, MAX_ITERATIONS: 1000, EPSILON: 1e-9 });
+
+// ─── DateUtils ───────────────────────────────────────────────────────────────
+class DateUtils {
+    static daysBetween(from, to) {
+        return Math.round((Date.UTC(to.getFullYear(), to.getMonth(), to.getDate()) -
+                           Date.UTC(from.getFullYear(), from.getMonth(), from.getDate())) / 86400000);
+    }
+    static days30_360(from, to) {
+        let y1=from.getFullYear(), m1=from.getMonth()+1, d1=from.getDate();
+        let y2=to.getFullYear(),   m2=to.getMonth()+1,   d2=to.getDate();
+        if (d1===30 && d2===31) d2=30;
+        return (y2-y1)*360 + (m2-m1)*30 + (d2-d1);
+    }
+    static clone(date) { return new Date(date.getTime()); }
+    static addMonths(date, n) {
+        const d=new Date(date.getTime()), day=d.getDate();
+        d.setMonth(d.getMonth()+n);
+        if (d.getDate()<day) d.setDate(0);
+        return d;
+    }
+    static addDays(date, n) { const d=new Date(date.getTime()); d.setDate(d.getDate()+n); return d; }
+    static compare(a, b) {
+        const av=Date.UTC(a.getFullYear(),a.getMonth(),a.getDate());
+        const bv=Date.UTC(b.getFullYear(),b.getMonth(),b.getDate());
+        return av<bv ? -1 : av>bv ? 1 : 0;
+    }
+    static equals(a, b) { return DateUtils.compare(a,b)===0; }
+    static isWeekend(date) { const d=date.getDay(); return d===0||d===6; }
+    static toISO(date) {
+        return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+    }
+    static format(date) {
+        return `${String(date.getDate()).padStart(2,'0')}.${String(date.getMonth()+1).padStart(2,'0')}.${date.getFullYear()}`;
+    }
+}
+
+// ─── Money ───────────────────────────────────────────────────────────────────
+class Money {
+    static round(v) { return Math.round((v + Number.EPSILON) * 100) / 100; }
+    static roundRate(v) { return Math.round((v + Number.EPSILON) * 10000) / 10000; }
+}
+
+// ─── KazakhstanCalendar ──────────────────────────────────────────────────────
+class KazakhstanCalendar {
+    constructor(mode = CalendarMode.COLVIR) {
+        this.mode = mode;
+        this.cache = {};
+    }
+    buildColvirHolidaySet(y) {
+        if (this.cache[y]) return this.cache[y];
+        const fixed = __HOLIDAYS_DATA__.colvir.fixed;
+        const set = new Set();
+        for (const h of fixed) {
+            const base = new Date(Date.UTC(y, h.month - 1, h.day));
+            set.add(DateUtils.toISO(base));
+        }
+        this.cache[y] = set;
+        return set;
+    }
+    isHoliday(date) {
+        const m = date.getMonth() + 1, d = date.getDate(), y = date.getFullYear();
+        if (this.mode === CalendarMode.COLVIR) {
+            const set = this.buildColvirHolidaySet(y);
+            return set.has(DateUtils.toISO(date));
+        }
+        const yd = __HOLIDAYS_DATA__.actual[y];
+        if (!yd) {
+            const set = this.buildColvirHolidaySet(y);
+            return set.has(DateUtils.toISO(date));
+        }
+        const iso = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        return yd.holidays.some(h => h.date === iso);
+    }
+    isNonWorkingDay(date) {
+        return DateUtils.isWeekend(date) || this.isHoliday(date);
+    }
+    adjustPaymentDate(date) {
+        let adjusted = DateUtils.clone(date);
+        while (this.isNonWorkingDay(adjusted)) {
+            adjusted = DateUtils.addDays(adjusted, 1);
+        }
+        return adjusted;
+    }
+}
+
+// ─── PaymentRow ──────────────────────────────────────────────────────────────
+class PaymentRow {
+    constructor(period, paymentDate, days, openingBalance, principal, interest, payment, closingBalance, rowType = RowType.NORMAL, metadata = {}) {
+        this.period = period;
+        this.paymentDate = new Date(paymentDate);
+        this.days = days;
+        this.openingBalance = Money.round(openingBalance);
+        this.principal = Money.round(principal);
+        this.interest = Money.round(interest);
+        this.payment = Money.round(payment);
+        this.closingBalance = Money.round(closingBalance);
+        this.rowType = rowType;
+        this.metadata = Object.freeze({...metadata});
+        Object.freeze(this);
+    }
+    toJSON() {
+        return {
+            period: this.period,
+            paymentDate: this.paymentDate,
+            days: this.days,
+            openingBalance: this.openingBalance,
+            principal: this.principal,
+            interest: this.interest,
+            payment: this.payment,
+            closingBalance: this.closingBalance,
+            rowType: this.rowType,
+            metadata: this.metadata
+        };
+    }
+}
+
+// ─── Schedule ────────────────────────────────────────────────────────────────
+class Schedule {
+    constructor(rows) {
+        this.rows = Object.freeze([...rows]);
+        Object.freeze(this);
+    }
+    get length() { return this.rows.length; }
+    get(i) { return this.rows[i]; }
+    totalPayment() { return Money.round(this.rows.reduce((s,r)=>s+r.payment,0)); }
+    totalInterest() { return Money.round(this.rows.reduce((s,r)=>s+r.interest,0)); }
+    totalPrincipal() { return Money.round(this.rows.reduce((s,r)=>s+r.principal,0)); }
+    finalBalance() { return this.rows.length > 0 ? this.rows[this.rows.length-1].closingBalance : 0; }
+    toJSON() { return { rows: this.rows.map(r=>r.toJSON()) }; }
+}
+
+// ─── RestructuringLoan ───────────────────────────────────────────────────────
+class RestructuringLoan {
+    constructor({
+        principalBalance,
+        overduePrincipal = 0,
+        overdueInterest = 0,
+
+        annualRate,
+        effectiveDate,
+        firstNewPaymentDate,
+        newLastPaymentDate,
+
+        paymentMethod = PaymentMethod.ANNUITY,
+        distributionMode = DistributionMode.ALL_NEXT_PAYMENTS,
+
+        graceMonths = 0,
+        gracePrincipal = false,
+        graceInterest = false,
+
+        overdueInterestDistribution = "ALL_AFTER_GRACE"
+    }) {
+        this.principalBalance = Number(principalBalance);
+        this.overduePrincipal = Number(overduePrincipal);
+        this.overdueInterest = Number(overdueInterest);
+
+        this.annualRate = Number(annualRate);
+        this.effectiveDate = new Date(effectiveDate);
+        this.firstNewPaymentDate = new Date(firstNewPaymentDate);
+        this.newLastPaymentDate = new Date(newLastPaymentDate);
+
+        this.paymentMethod = paymentMethod;
+        this.distributionMode = distributionMode;
+
+        this.graceMonths = Math.max(0, Number.parseInt(graceMonths, 10) || 0);
+        this.gracePrincipal = Boolean(gracePrincipal);
+        this.graceInterest = Boolean(graceInterest);
+
+        this.overdueInterestDistribution = overdueInterestDistribution;
+
+        if (!Number.isFinite(this.principalBalance) || this.principalBalance < 0) {
+            throw new Error("Остаток ОД должен быть числом не меньше нуля");
+        }
+
+        if (!Number.isFinite(this.overduePrincipal) || this.overduePrincipal < 0) {
+            throw new Error("Просроченный ОД должен быть числом не меньше нуля");
+        }
+
+        if (!Number.isFinite(this.overdueInterest) || this.overdueInterest < 0) {
+            throw new Error("Просроченное вознаграждение должно быть числом не меньше нуля");
+        }
+
+        if (this.principalBalance + this.overduePrincipal <= 0) {
+            throw new Error("Введите остаток ОД или просроченный ОД");
+        }
+
+        if (!(this.effectiveDate instanceof Date) || Number.isNaN(this.effectiveDate.getTime())) {
+            throw new Error("Некорректная дата реструктуризации");
+        }
+
+        if (!(this.firstNewPaymentDate instanceof Date) || Number.isNaN(this.firstNewPaymentDate.getTime())) {
+            throw new Error("Некорректная дата первого платежа");
+        }
+
+        if (!(this.newLastPaymentDate instanceof Date) || Number.isNaN(this.newLastPaymentDate.getTime())) {
+            throw new Error("Некорректная дата окончания нового графика");
+        }
+
+        if (DateUtils.compare(this.firstNewPaymentDate, this.effectiveDate) <= 0) {
+            throw new Error("Первый новый платёж должен быть позднее даты реструктуризации");
+        }
+
+        if (DateUtils.compare(this.newLastPaymentDate, this.firstNewPaymentDate) < 0) {
+            throw new Error("Дата окончания не может быть раньше первого нового платежа");
+        }
+
+        Object.freeze(this);
+    }
+
+    get restructuringPrincipal() {
+        return Money.round(this.principalBalance + this.overduePrincipal);
+    }
+}
+
+// ─── RestructuringEngine ─────────────────────────────────────────────────────
+class RestructuringEngine {
+    constructor(calendar = null) {
+        this.calendar = calendar;
+    }
+
+    generate(loan) {
+        const totalPeriods = this.calculateTotalPeriods(loan);
+
+        if (loan.graceMonths >= totalPeriods) {
+            throw new Error("Количество льготных месяцев должно быть меньше количества периодов нового графика");
+        }
+
+        const paymentDates = this.buildPaymentDates(loan, totalPeriods);
+
+        const rows = [];
+        let balance = loan.restructuringPrincipal;
+        let prevDate = DateUtils.clone(loan.effectiveDate);
+
+        let deferredGraceInterest = 0;
+        let remainingOverdueInterest =
+            loan.overdueInterestDistribution === "EXCLUDE"
+                ? 0
+                : Money.round(loan.overdueInterest);
+
+        let annuityPayment = this.calcAnnuityPayment(
+            balance,
+            loan.annualRate,
+            paymentDates
+        );
+
+        for (let period = 1; period <= totalPeriods; period++) {
+            const paymentDate = paymentDates[period];
+            const daysActual = DateUtils.daysBetween(prevDate, paymentDate);
+            const days30_360 = DateUtils.days30_360(prevDate, paymentDate);
+
+            const openingBalance = Money.round(balance);
+            const inGrace = period <= loan.graceMonths;
+            const odGrace = inGrace && loan.gracePrincipal;
+            const percentGrace = inGrace && loan.graceInterest;
+
+            const accruedForPeriod = Money.round(
+                openingBalance * loan.annualRate / 100 * days30_360 / 360
+            );
+
+            let currentInterest = accruedForPeriod;
+            let principal = 0;
+
+            /*
+             * После окончания льготы пересчитываем аннуитет по оставшемуся ОД
+             * и по оставшемуся количеству платёжных периодов.
+             */
+            if (period === loan.graceMonths + 1 && loan.gracePrincipal) {
+                const remainingDates = [
+                    DateUtils.clone(prevDate),
+                    ...paymentDates.slice(period)
+                ];
+
+                annuityPayment = this.calcAnnuityPayment(
+                    openingBalance,
+                    loan.annualRate,
+                    remainingDates
+                );
+            }
+
+            if (period === totalPeriods) {
+                principal = openingBalance;
+            } else if (!odGrace) {
+                if (loan.paymentMethod === PaymentMethod.EQUAL_PRINCIPAL) {
+                    const normalPeriodsLeft = this.countPrincipalPeriodsLeft(
+                        loan,
+                        period,
+                        totalPeriods
+                    );
+
+                    principal = normalPeriodsLeft > 0
+                        ? Money.round(openingBalance / normalPeriodsLeft)
+                        : openingBalance;
+                } else {
+                    principal = Money.round(annuityPayment - accruedForPeriod);
+                }
+
+                principal = Math.max(0, Math.min(principal, openingBalance));
+            }
+
+            /*
+             * При льготе по процентам процент начисляется,
+             * но текущий платёж его не содержит.
+             */
+            if (percentGrace) {
+                deferredGraceInterest = Money.round(
+                    deferredGraceInterest + accruedForPeriod
+                );
+
+                currentInterest = 0;
+            }
+
+            /*
+             * Когда льгота завершается, накопленные за льготу проценты
+             * распределяются согласно общему режиму distributionMode.
+             */
+            if (!inGrace && deferredGraceInterest > 0) {
+                const allocation = this.allocateDeferredAmount(
+                    deferredGraceInterest,
+                    period,
+                    totalPeriods,
+                    loan.distributionMode
+                );
+
+                currentInterest = Money.round(currentInterest + allocation.amount);
+                deferredGraceInterest = allocation.remaining;
+            }
+
+            /*
+             * Просроченное вознаграждение не капитализируется в ОД.
+             * Оно добавляется к вознаграждению согласно выбранному правилу.
+             */
+            if (
+                remainingOverdueInterest > 0 &&
+                this.canAllocateOverdueInterest(
+                    loan,
+                    period,
+                    inGrace
+                )
+            ) {
+                const allocation = this.allocateOverdueInterest(
+                    remainingOverdueInterest,
+                    loan,
+                    period,
+                    totalPeriods
+                );
+
+                currentInterest = Money.round(currentInterest + allocation.amount);
+                remainingOverdueInterest = allocation.remaining;
+            }
+
+            const closingBalance = Money.round(openingBalance - principal);
+            const payment = Money.round(principal + currentInterest);
+
+            rows.push(new PaymentRow(
+                period,
+                paymentDate,
+                daysActual,
+                openingBalance,
+                principal,
+                currentInterest,
+                payment,
+                closingBalance,
+                inGrace ? RowType.GRACE : RowType.NORMAL,
+                {
+                    restructuring: true,
+                    grace: inGrace,
+                    odGrace,
+                    percentGrace,
+
+                    accruedInterestForPeriod: accruedForPeriod,
+                    deferredGraceInterestLeft: deferredGraceInterest,
+                    overdueInterestLeft: remainingOverdueInterest,
+
+                    originalPrincipalBalance: loan.principalBalance,
+                    overduePrincipalIncluded: loan.overduePrincipal,
+                    restructuringPrincipal: loan.restructuringPrincipal
+                }
+            ));
+
+            balance = closingBalance;
+            prevDate = paymentDate;
+        }
+
+        return new Schedule(rows);
+    }
+
+    calculateTotalPeriods(loan) {
+        return (
+            (loan.newLastPaymentDate.getFullYear() - loan.firstNewPaymentDate.getFullYear()) * 12 +
+            (loan.newLastPaymentDate.getMonth() - loan.firstNewPaymentDate.getMonth()) +
+            1
+        );
+    }
+
+    buildPaymentDates(loan, totalPeriods) {
+        const dates = [DateUtils.clone(loan.effectiveDate)];
+        const paymentDay = loan.firstNewPaymentDate.getDate();
+
+        for (let period = 1; period <= totalPeriods; period++) {
+            const monthAnchor = DateUtils.addMonths(
+                loan.firstNewPaymentDate,
+                period - 1
+            );
+
+            const year = monthAnchor.getFullYear();
+            const month = monthAnchor.getMonth();
+            const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
+
+            /*
+             * Правило 31-го числа:
+             * если исходная дата — 31-е, то в коротком месяце берём
+             * последний календарный день этого месяца; затем переносим
+             * с праздника/выходного на следующий рабочий день.
+             */
+            const plannedDate = new Date(
+                year,
+                month,
+                Math.min(paymentDay, lastDayOfMonth)
+            );
+
+            const paymentDate = this.calendar
+                ? this.calendar.adjustPaymentDate(plannedDate)
+                : plannedDate;
+
+            dates.push(paymentDate);
+        }
+
+        return dates;
+    }
+
+    calcAnnuityPayment(principal, annualRate, dates) {
+        const n = dates.length - 1;
+
+        if (n <= 0) return 0;
+        if (annualRate === 0) return Money.round(principal / n);
+
+        let denominator = 0;
+        let cumulativeProduct = 1;
+
+        for (let i = 1; i <= n; i++) {
+            const days = DateUtils.days30_360(dates[i - 1], dates[i]);
+            const periodRate = annualRate / 100 * days / 360;
+
+            cumulativeProduct *= (1 + periodRate);
+            denominator += 1 / cumulativeProduct;
+        }
+
+        return denominator === 0
+            ? 0
+            : Money.round(principal / denominator);
+    }
+
+    countPrincipalPeriodsLeft(loan, currentPeriod, totalPeriods) {
+        let count = 0;
+
+        for (let period = currentPeriod; period <= totalPeriods; period++) {
+            const inGrace = period <= loan.graceMonths;
+            const odGrace = inGrace && loan.gracePrincipal;
+
+            if (!odGrace) count++;
+        }
+
+        return count;
+    }
+
+    canAllocateOverdueInterest(loan, period, inGrace) {
+        if (loan.overdueInterestDistribution === "EXCLUDE") return false;
+
+        if (
+            loan.overdueInterestDistribution === "ALL_AFTER_GRACE" &&
+            inGrace
+        ) {
+            return false;
+        }
+
+        return true;
+    }
+
+    allocateOverdueInterest(amount, loan, period, totalPeriods) {
+        if (
+            loan.overdueInterestDistribution === "FIRST_PAYMENT" ||
+            (
+                loan.overdueInterestDistribution === "ALL_AFTER_GRACE" &&
+                period === loan.graceMonths + 1
+            )
+        ) {
+            return {
+                amount: Money.round(amount),
+                remaining: 0
+            };
+        }
+
+        let eligiblePeriods;
+
+        if (loan.overdueInterestDistribution === "ALL_AFTER_GRACE") {
+            eligiblePeriods = Math.max(
+                1,
+                totalPeriods - Math.max(period, loan.graceMonths + 1) + 1
+            );
+        } else {
+            eligiblePeriods = Math.max(1, totalPeriods - period + 1);
+        }
+
+        const share = Money.round(amount / eligiblePeriods);
+
+        return {
+            amount: share,
+            remaining: Money.round(amount - share)
+        };
+    }
+
+    allocateDeferredAmount(amount, period, totalPeriods, distributionMode) {
+        if (distributionMode === DistributionMode.FIRST_PAYMENT) {
+            return {
+                amount: Money.round(amount),
+                remaining: 0
+            };
+        }
+
+        const periodsLeft = Math.max(1, totalPeriods - period + 1);
+        const share = Money.round(amount / periodsLeft);
+
+        return {
+            amount: share,
+            remaining: Money.round(amount - share)
+        };
+    }
+}
+
+// ─── CashFlow ────────────────────────────────────────────────────────────────
+class CashFlow {
+    constructor(date, amount, type = "GENERIC", metadata = {}) {
+        this.date = new Date(date);
+        this.amount = Money.round(amount);
+        this.type = type;
+        this.metadata = Object.freeze({...metadata});
+        Object.freeze(this);
+    }
+    toJSON() {
+        return { date: this.date, amount: this.amount, type: this.type, metadata: this.metadata };
+    }
+}
+
+// ─── CashFlowSet ─────────────────────────────────────────────────────────────
+class CashFlowSet {
+    constructor(flows) {
+        this.flows = Object.freeze([...flows]);
+        Object.freeze(this);
+    }
+    get length() { return this.flows.length; }
+    get(i) { return this.flows[i]; }
+    get sorted() { return new CashFlowSet([...this.flows].sort((a,b) => a.date - b.date)); }
+    get hasMixedSigns() {
+        return this.flows.some(f => f.amount > 0) && this.flows.some(f => f.amount < 0);
+    }
+    toJSON() { return { flows: this.flows.map(f => f.toJSON()) }; }
+}
+
+// ─── APRCalculator ───────────────────────────────────────────────────────────
+class APRCalculator {
+    static calculate(cashFlowSet, options = {}) {
+        if (!cashFlowSet.hasMixedSigns) {
+            throw new Error("CashFlowSet must contain both positive and negative flows.");
+        }
+        const basisDays = options.basisDays ?? APR.BASIS_DAYS;
+        const guess = typeof options.guess === 'number' ? options.guess : 0.30;
+        const tolerance = typeof options.tolerance === 'number' ? options.tolerance : APR.EPSILON;
+        const maxIter = Number.isInteger(options.maxIterations) ? options.maxIterations : APR.MAX_ITERATIONS;
+
+        const flows = cashFlowSet.sorted.flows;
+        const base = flows[0].date;
+        let rate = guess, converged = false, residual = null, iters = 0;
+
+        for (let i = 0; i < maxIter; i++) {
+            iters = i + 1;
+            const f = APRCalculator.npv(flows, rate, base, basisDays);
+            const df = APRCalculator.npvD(flows, rate, base, basisDays);
+            residual = f;
+            if (Math.abs(f) < tolerance) { converged = true; break; }
+            if (Math.abs(df) < tolerance) break;
+            const next = rate - f / df;
+            if (!Number.isFinite(next) || next <= -0.9999999999) break;
+            rate = next;
+        }
+
+        return {
+            annualRate: rate,
+            annualPercentRate: Money.roundRate(rate * 100),
+            converged,
+            iterations: iters,
+            residual: residual ?? 0,
+            basisDays,
+            metadata: { baseDate: base, method: "NEWTON_RAPHSON" }
+        };
+    }
+
+    static npv(flows, r, base, basis) {
+        return flows.reduce((s, f) => s + f.amount * Math.pow(1 + r, -DateUtils.daysBetween(base, f.date) / basis), 0);
+    }
+
+    static npvD(flows, r, base, basis) {
+        return flows.reduce((s, f) => {
+            const e = DateUtils.daysBetween(base, f.date) / basis;
+            return e === 0 ? s : s + f.amount * (-e) * Math.pow(1 + r, -e - 1);
+        }, 0);
+    }
+}
+
+// ─── CashFlowBuilder ─────────────────────────────────────────────────────────
+class CashFlowBuilder {
+    static fromRestructuringAndSchedule(loan, schedule, options = {}) {
+        const fees = Array.isArray(options.fees) ? options.fees : [];
+        const feeOnIssue = fees.reduce((s, f) => DateUtils.equals(new Date(f.date), loan.effectiveDate) ? s + f.amount : s, 0);
+        
+        const issueAmount = loan.restructuringPrincipal - feeOnIssue;
+        const list = [new CashFlow(DateUtils.clone(loan.effectiveDate), -issueAmount, "DISBURSEMENT", { description: "Реструктуризация" })];
+
+        for (const row of schedule.rows) {
+            if (row.metadata.technical) continue;
+            if (row.payment === 0) continue;
+            list.push(new CashFlow(DateUtils.clone(row.paymentDate), row.payment, "PAYMENT", { period: row.period }));
+        }
+
+        for (const fee of fees) {
+            if (!DateUtils.equals(new Date(fee.date), loan.effectiveDate)) {
+                list.push(new CashFlow(new Date(fee.date), fee.amount, "FEE", { description: fee.description }));
+            }
+        }
+
+        return new CashFlowSet(list);
+    }
+}
+
+// ─── UI ──────────────────────────────────────────────────────────────────────
+const els = {
+    principalBalance: document.getElementById('principalBalance'),
+    overduePrincipal: document.getElementById('overduePrincipal'),
+    overdueInterest: document.getElementById('overdueInterest'),
+
+    annualRate: document.getElementById('annualRate'),
+    effectiveDate: document.getElementById('effectiveDate'),
+    firstNewPaymentDate: document.getElementById('firstNewPaymentDate'),
+    newLastPaymentDate: document.getElementById('newLastPaymentDate'),
+
+    paymentMethod: document.getElementById('paymentMethod'),
+    distributionMode: document.getElementById('distributionMode'),
+
+    graceMonths: document.getElementById('graceMonths'),
+    gracePrincipal: document.getElementById('gracePrincipal'),
+    graceInterest: document.getElementById('graceInterest'),
+    overdueInterestDistribution: document.getElementById('overdueInterestDistribution'),
+
+    upfrontFee: document.getElementById('upfrontFee'),
+    calcBtn: document.getElementById('calcBtn'),
+    exportBtn: document.getElementById('exportBtn'),
+    recalcBtn: document.getElementById('recalcBtn'),
+    errorBox: document.getElementById('errorBox'),
+    scheduleBody: document.querySelector('#scheduleTable tbody'),
+    summary: document.getElementById('summary'),
+    editHint: document.getElementById('editHint')
+};
+
+let lastResult = null;
+let manualEdits = {};
+
+function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+function fmt(v) { return Number(v ?? 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 }); }
+function fmtPct(v) { return Number(v ?? 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function formatDate(d) { const dt = new Date(d); return `${String(dt.getDate()).padStart(2,'0')}.${String(dt.getMonth()+1).padStart(2,'0')}.${dt.getFullYear()}`; }
+function isoDate(d) { const dt = new Date(d); return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`; }
+
+function getCalendar() {
+    return new KazakhstanCalendar(CalendarMode.ACTUAL);
+}
+
+function renderSchedule(result) {
+    const { schedule, apr } = result;
+    els.scheduleBody.innerHTML = '';
+    manualEdits = {};
+
+    schedule.rows.forEach((row, idx) => {
+        const tr = document.createElement('tr');
+        tr.dataset.rowIdx = idx;
+
+        const tdIdx = document.createElement('td');
+        tdIdx.className = 'left';
+        tdIdx.textContent = idx;
+
+        const tdDate = document.createElement('td');
+        tdDate.className = 'left';
+        tdDate.textContent = formatDate(row.paymentDate);
+
+        const tdPayment = document.createElement('td');
+        tdPayment.className = 'payment-cell';
+        tdPayment.textContent = fmt(row.payment);
+
+        const tdInterest = document.createElement('td');
+        tdInterest.textContent = fmt(row.interest);
+
+        const tdPrincipal = document.createElement('td');
+        tdPrincipal.textContent = fmt(row.principal);
+
+        const tdBalance = document.createElement('td');
+        tdBalance.textContent = fmt(row.closingBalance);
+
+        const tdDays = document.createElement('td');
+        tdDays.textContent = row.days;
+
+        const tdType = document.createElement('td');
+        tdType.className = 'left';
+        tdType.textContent = row.rowType;
+
+        tr.append(tdIdx, tdDate, tdPayment, tdInterest, tdPrincipal, tdBalance, tdDays, tdType);
+        els.scheduleBody.appendChild(tr);
+    });
+
+    renderSummary({
+        totalPrincipal: schedule.totalPrincipal(),
+        totalInterest: schedule.totalInterest(),
+        totalPayment: schedule.totalPayment(),
+        rowCount: schedule.length
+    }, apr);
+
+    els.editHint.style.display = 'none';
+}
+
+function renderSummary(totals, apr) {
+    const gesvValue = Number.isFinite(apr?.annualPercentRate) ? apr.annualPercentRate : 0;
+    els.summary.innerHTML = '';
+
+    const items = [
+        { label: 'Погашение ОД', value: fmt(totals.totalPrincipal) },
+        { label: 'Вознаграждение', value: fmt(totals.totalInterest) },
+        { label: 'Всего платежей', value: fmt(totals.totalPayment) },
+        { label: 'Периодов', value: totals.rowCount },
+        { label: 'ГЭСВ, %', value: fmtPct(gesvValue), gesv: true }
+    ];
+
+    for (const item of items) {
+        const el = document.createElement('div');
+        el.className = `summary-item${item.gesv ? ' gesv' : ''}`;
+        el.innerHTML = `<div class="label">${item.label}</div><div class="value">${item.value}</div>`;
+        els.summary.appendChild(el);
+    }
+}
+
+function recalcGESV() {
+    if (!lastResult) return;
+    try {
+        const rows = getCurrentRows();
+        const issueRow = rows.find(r => r.metadata?.technical);
+        if (!issueRow) return;
+
+        const issueDate = new Date(issueRow.paymentDate);
+        const upfrontFee = num(els.upfrontFee.value);
+        const restructuringPrincipal =
+    num(els.principalBalance.value) +
+    num(els.overduePrincipal.value);
+
+const cashFlows = [{
+    date: issueDate,
+    amount: -restructuringPrincipal - upfrontFee
+}];
+
+        for (const row of rows) {
+            if (row.metadata?.technical) continue;
+            const payment = Number(row.principal) + Number(row.interest);
+            if (payment !== 0) {
+                cashFlows.push({ date: new Date(row.paymentDate), amount: payment });
+            }
+        }
+
+        if (upfrontFee > 0) {
+            cashFlows.push({ date: issueDate, amount: upfrontFee });
+        }
+
+        const apr = aprFromArray(cashFlows, { basisDays: APR.BASIS_DAYS });
+        const totalPrincipal = rows.reduce((s, r) => s + Number(r.principal), 0);
+        const totalInterest = rows.reduce((s, r) => s + Number(r.interest), 0);
+        renderSummary({ totalPrincipal, totalInterest, totalPayment: totalPrincipal + totalInterest, rowCount: rows.length }, apr);
+    } catch (e) {
+        console.error('recalcGESV error:', e);
+    }
+}
+
+function getCurrentRows() {
+    if (!lastResult) return [];
+    return lastResult.schedule.rows.map((row, idx) => {
+        const edit = manualEdits[idx];
+        const date = edit?.date !== undefined ? new Date(edit.date) : new Date(row.paymentDate);
+        const principal = edit?.principal !== undefined ? Number(edit.principal) : row.principal;
+        const interest = edit?.interest !== undefined ? Number(edit.interest) : row.interest;
+        return { ...row, paymentDate: date, principal, interest, metadata: row.metadata || { technical: false } };
+    });
+}
+
+function aprFromArray(rawFlows, opts) {
+    const flows = rawFlows.map(f => new CashFlow(f.date, f.amount, "GENERIC", {}));
+    return APRCalculator.calculate(new CashFlowSet(flows), opts);
+}
+
+function exportToExcel() {
+    if (!lastResult) {
+        alert('Сначала рассчитайте график');
+        return;
+    }
+
+    const rows = getCurrentRows();
+    const apr = lastResult.apr;
+    let gesvFinal = Number.isFinite(apr?.annualPercentRate) ? apr.annualPercentRate : 0;
+
+    if (Object.keys(manualEdits).length > 0) {
+        try {
+            const issueDate = new Date(rows.find(r => r.metadata?.technical)?.paymentDate);
+            const upfrontFee = num(els.upfrontFee.value);
+            const restructuringPrincipal =
+    num(els.principalBalance.value) +
+    num(els.overduePrincipal.value);
+
+const cashFlows = [{
+    date: issueDate,
+    amount: -restructuringPrincipal - upfrontFee
+}];
+
+            for (const r of rows) {
+                if (r.metadata?.technical) continue;
+                const p = Number(r.principal) + Number(r.interest);
+                if (p !== 0) cashFlows.push({ date: new Date(r.paymentDate), amount: p });
+            }
+
+            if (upfrontFee > 0) cashFlows.push({ date: issueDate, amount: upfrontFee });
+            const aprRes = aprFromArray(cashFlows, { basisDays: APR.BASIS_DAYS });
+            if (Number.isFinite(aprRes?.annualPercentRate)) gesvFinal = aprRes.annualPercentRate;
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    const principal = num(els.principalBalance.value);
+    const rate = num(els.annualRate.value);
+    const lastDateStr = formatDate(new Date(els.newLastPaymentDate.value));
+    const todayStr = formatDate(new Date());
+    const methodLabel = { ANNUITY: 'Аннуитет', EQUAL_PRINCIPAL: 'Равные части ОД' };
+    const methodText = methodLabel[els.paymentMethod.value] || els.paymentMethod.value;
+    const gesvStr = gesvFinal.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const principalFmt = Math.round(principal).toLocaleString('ru-RU').replace(/\s/g, ' ') + ' KZT';
+    const rateFmt = rate;
+    const gesvFmt = gesvStr;
+
+    // Генерация Excel (упрощённая версия)
+    const ss = [];
+    ss.push('');
+    ss.push(`График реструктуризации от ${todayStr}`);
+    ss.push('');
+    ss.push(['Сумма реструктуризации:', principalFmt]);
+    ss.push(['Ставка, %:', rateFmt]);
+    ss.push(['ГЭСВ, %:', gesvFmt]);
+    ss.push(['Дата окончания:', lastDateStr]);
+    ss.push(['Метод:', methodText]);
+    ss.push('');
+    ss.push('');
+    ss.push(['#','Дата платежа','Сумма платежа','Вознаграждение','Основной долг','Остаток ОД','Дней','Тип']);
+    
+    for (const row of rows) {
+        const isGrace = row.rowType === 'GRACE';
+        const cells = [];
+        cells.push(row.period);
+        cells.push(formatDate(row.paymentDate));
+        cells.push(fmt(row.principal + row.interest));
+        cells.push(fmt(row.interest));
+        cells.push(fmt(row.principal));
+        cells.push(fmt(row.closingBalance));
+        cells.push(row.days);
+        cells.push(row.rowType);
+        ss.push(cells);
+    }
+
+    // Создаём простой CSV для экспорта
+    const csvContent = ss.map(row => {
+        if (Array.isArray(row)) {
+            return row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',');
+        } else {
+            return `"${String(row).replace(/"/g, '""')}"`;
+        }
+    }).join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `restructuring_schedule_${Math.round(principal)}_${todayStr.replace(/\./g,'-')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// ─── Event Listeners ─────────────────────────────────────────────────────────
+els.calcBtn.addEventListener('click', () => {
+    els.errorBox.textContent = '';
+    try {
+        const principalBalance = num(els.principalBalance.value);
+        const overduePrincipal = num(els.overduePrincipal.value);
+        const overdueInterest = num(els.overdueInterest.value);
+
+        const annualRate = num(els.annualRate.value);
+        const effectiveDate = new Date(els.effectiveDate.value);
+        const firstNewPaymentDate = new Date(els.firstNewPaymentDate.value);
+        const newLastPaymentDate = new Date(els.newLastPaymentDate.value);
+
+        const paymentMethod = els.paymentMethod.value;
+        const distributionMode = els.distributionMode.value;
+
+        const graceMonths = Math.max(
+            0,
+            Number.parseInt(els.graceMonths.value, 10) || 0
+        );
+
+        const gracePrincipal = els.gracePrincipal.checked;
+        const graceInterest = els.graceInterest.checked;
+
+        const overdueInterestDistribution =
+            els.overdueInterestDistribution.value;
+
+        const upfrontFee = num(els.upfrontFee.value);
+
+        if (!principalBalance || principalBalance <= 0) throw new Error('Введите корректный остаток ОД');
+        if (isNaN(effectiveDate)) throw new Error('Некорректная дата начала новой фазы');
+        if (isNaN(firstNewPaymentDate)) throw new Error('Некорректная дата первого платежа');
+        if (isNaN(newLastPaymentDate)) throw new Error('Некорректная дата окончания');
+
+        const loan = new RestructuringLoan({
+    principalBalance,
+    overduePrincipal,
+    overdueInterest,
+
+    annualRate,
+    effectiveDate,
+    firstNewPaymentDate,
+    newLastPaymentDate,
+
+    paymentMethod,
+    distributionMode,
+
+    graceMonths,
+    gracePrincipal,
+    graceInterest,
+
+    overdueInterestDistribution
+});
+
+        const calendar = getCalendar();
+        const engine = new RestructuringEngine(calendar);
+        const schedule = engine.generate(loan);
+        
+        const fees = upfrontFee > 0 ? [{ date: effectiveDate, amount: upfrontFee }] : [];
+        const cashFlows = CashFlowBuilder.fromRestructuringAndSchedule(loan, schedule, { fees });
+        const apr = APRCalculator.calculate(cashFlows, { basisDays: APR.BASIS_DAYS });
+
+        lastResult = { schedule, apr };
+        manualEdits = {};
+        els.recalcBtn.style.display = 'none';
+        renderSchedule(lastResult);
+    } catch (e) {
+        els.errorBox.textContent = e.message || String(e);
+    }
+});
+
+els.recalcBtn.addEventListener('click', recalcGESV);
+els.exportBtn.addEventListener('click', exportToExcel);
+</script>
+</body>
+</html>
